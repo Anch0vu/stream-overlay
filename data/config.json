@@ -1,5 +1,9 @@
 {
   "canvasWidth": 1920,
   "canvasHeight": 1080,
-  "port": 13337
+  "port": 13337,
+  "grid": 8,
+  "modToken": "Kokikol0",
+  "allowProxy": true
 }
+
