@@ -1,0 +1,13 @@
+[Unit]
+Description=Stream Overlay & Moderator FastAPI
+After=network.target
+
+[Service]
+User=ai
+WorkingDirectory=/opt/stream-overlay
+ExecStart=/usr/bin/python3 /opt/stream-overlay/overlay_main.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Overlay</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden}
+  #stage{position:relative;width:100vw;height:100vh;pointer-events:none}
+  .item{position:absolute;box-sizing:border-box;pointer-events:none}
+  .text{color:#fff; text-shadow:0 2px 6px rgba(0,0,0,.8)}
+  .image, .video{max-width:none;max-height:none}
+</style>
+</head>
+<body>
+  <div id="stage"></div>
+  <script src="/static/overlay.js"></script>
+</body>
+</html>

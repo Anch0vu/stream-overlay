@@ -1,0 +1,25 @@
+html,body{
+  margin:0; padding:0; width:100%; height:100%;
+  background:transparent; overflow:hidden;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+}
+#stage{
+  position:relative; width:100%; height:100%;
+}
+.block{
+  position:absolute;
+  user-select:none;
+  cursor:move;
+  border: 0 solid transparent; /* включи рамку для дебага, если надо */
+}
+.block.text{
+  color:#fff;
+  text-shadow: 0 2px 4px rgba(0,0,0,.6);
+  padding: 8px 12px;
+  box-sizing: border-box;
+}
+.block.image img, .block.video video, .block.audio audio{
+  width:100%; height:100%; object-fit:contain;
+  display:block;
+}
+.dragging{ outline: 2px dashed #00aaff; }
