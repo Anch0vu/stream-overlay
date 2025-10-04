@@ -1,7 +1,5 @@
+uploads/*
+!uploads/.gitkeep
 __pycache__/
 *.pyc
 .env
-*.log
-data/scene.json
-uploads/*
-!uploads/.gitkeep
