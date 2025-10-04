@@ -1,0 +1,45 @@
+diff --git a/main.py b/main.py
+index e303db1..abcd123 100644
+--- a/main.py
++++ b/main.py
+@@
+ import os, json, uuid, shutil, mimetypes
+ 
+ BASE = os.path.abspath(os.path.dirname(__file__))
+@@
+ SCENE_PATH = os.path.join(DATA_DIR, "scene.json")
+ 
+ os.makedirs(DATA_DIR, exist_ok=True)
+ os.makedirs(UPLOAD_DIR, exist_ok=True)
+ 
++# ---------- FIX: добавили загрузку сцены ----------
++def load_scene():
++    if os.path.exists(SCENE_PATH):
++        try:
++            with open(SCENE_PATH, "r", encoding="utf-8") as f:
++                return json.load(f)
++        except Exception:
++            # если json битый – создаём пустой
++            return {"items": []}
++    else:
++        with open(SCENE_PATH, "w", encoding="utf-8") as f:
++            json.dump({"items": []}, f, ensure_ascii=False, indent=2)
++        return {"items": []}
++
+ 
+ # defaults
+ if not os.path.exists(CONFIG_PATH):
+@@
+ 
+ @app.get("/mod")
+ async def mod_panel(request: Request):
+-    return templates.TemplateResponse("mod_panel.html", {"request": requst})
++    scene = load_scene()
++    return templates.TemplateResponse(
++        "mod_panel.html",
++        {
++            "request": request,
++            "scene": scene
++        }
++    )
+

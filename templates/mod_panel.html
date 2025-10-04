@@ -1,84 +1,122 @@
 <!doctype html>
 <html>
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Moderator Panel</title>
-<link rel="stylesheet" href="/static/mod_panel.css">
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Moderator Panel</title>
+  <link rel="stylesheet" href="/static/mod_panel.css">
 </head>
 <body>
-<header class="bar">
+<header>
   <h1>Overlay Control</h1>
   <div class="row">
     <button id="btn-add-text">+ Text</button>
     <button id="btn-add-image">+ Image URL</button>
     <button id="btn-add-video">+ Video URL</button>
+    <button id="btn-add-timer">+ Timer</button>
+
     <label class="upload">
       <input type="file" id="file-upload" hidden>
       Upload file
     </label>
+    <button id="btn-refresh-uploads">Refresh uploads</button>
+
+    <button id="btn-undo">Undo (Ctrl+Z)</button>
+    <button id="btn-redo">Redo (Ctrl+Y)</button>
+
+    <label class="chk"><input type="checkbox" id="cb-snap" checked> Snap ({{cfg.grid}}px)</label>
+    <label class="chk"><input type="checkbox" id="cb-lockratio"> Lock ratio</label>
+
     <button id="btn-clear" class="danger">Clear all</button>
   </div>
 </header>
 
-<main class="wrap">
-  <aside class="col">
-    <h2>Items</h2>
-    <ul id="items"></ul>
+<main>
+  <aside class="left">
+    <section>
+      <h2>Items</h2>
+      <ul id="items"></ul>
+    </section>
 
-    <h2>Uploads</h2>
-    <ul id="upload-list"></ul>
+    <section>
+      <h2>Uploads</h2>
+      <div class="row small">
+        <label>Folder
+          <select id="sel-folder"></select>
+        </label>
+        <button id="btn-mkdir">+ Folder</button>
+      </div>
+      <ul id="upload-list"></ul>
+    </section>
+
+    <section>
+      <h2>Presets</h2>
+      <div class="row small">
+        <input id="preset-name" placeholder="scene_name">
+        <button id="btn-save-preset">Save</button>
+      </div>
+      <div class="row small">
+        <select id="preset-list"></select>
+        <button id="btn-load-preset">Load (fade)</button>
+      </div>
+    </section>
   </aside>
 
-  <section class="col">
-    <h2>Canvas</h2>
-    <div id="canvas"
-         style="width: {{ cfg.canvasWidth }}px; height: {{ cfg.canvasHeight }}px;">
-    </div>
+  <section class="canvas-wrap">
+    <h2>Drag items here (virtual {{cfg.canvasWidth}}×{{cfg.canvasHeight}})</h2>
+    <div id="canvas" class="canvas"></div>
   </section>
 
-  <aside class="col">
-    <h2>Selected</h2>
-    <div class="form">
-      <label>ID <input id="f-id" readonly></label>
-      <label>Kind
-        <select id="f-kind">
-          <option value="text">text</option>
-          <option value="image">image</option>
-          <option value="video">video</option>
-          <option value="audio">audio</option>
-        </select>
-      </label>
-      <label>Content (text or URL)
-        <textarea id="f-content" rows="6" placeholder="Markdown text or media URL"></textarea>
-      </label>
-      <div class="row">
-        <label>X <input id="f-x" type="number"></label>
-        <label>Y <input id="f-y" type="number"></label>
-        <label>W <input id="f-w" type="number"></label>
-        <label>H <input id="f-h" type="number"></label>
+  <aside class="right">
+    <section>
+      <h2>Selected</h2>
+      <div class="form">
+        <label>ID <input id="f-id" readonly></label>
+        <label>Kind
+          <select id="f-kind">
+            <option value="text">text</option>
+            <option value="image">image</option>
+            <option value="video">video</option>
+            <option value="audio">audio</option>
+          </select>
+        </label>
+        <label>Content (text or URL)
+          <textarea id="f-content" rows="6" placeholder="Markdown text or media URL"></textarea>
+        </label>
+        <div class="row">
+          <label>X <input id="f-x" type="number" step="1"></label>
+          <label>Y <input id="f-y" type="number" step="1"></label>
+          <label>W <input id="f-w" type="number" step="1"></label>
+          <label>H <input id="f-h" type="number" step="1"></label>
+        </div>
+        <div class="row">
+          <label>Font size <input id="f-font" type="number" value="40"></label>
+          <label>Color <input id="f-color" type="color" value="#ffffff"></label>
+          <label>BG <input id="f-bg" type="text" value="transparent" placeholder="transparent or rgba(0,0,0,0.5)"></label>
+          <label>Z <input id="f-z" type="number" value="1"></label>
+        </div>
+        <div class="row">
+          <button id="btn-update">Update</button>
+          <button id="btn-front">Bring to front</button>
+          <button id="btn-remove" class="danger">Remove</button>
+        </div>
       </div>
-      <div class="row">
-        <label>Font size <input id="f-font" type="number" value="40"></label>
-        <label>Color <input id="f-color" type="color" value="#ffffff"></label>
-        <label>BG <input id="f-bg" type="text" value="transparent" placeholder="transparent or rgba(0,0,0,0.5)"></label>
-        <label>Z <input id="f-z" type="number" value="1"></label>
-      </div>
-      <div class="row">
-        <label><input id="f-lock" type="checkbox" checked> Lock ratio</label>
-      </div>
-      <div class="row">
-        <button id="btn-update">Update</button>
-        <button id="btn-front">Bring to front</button>
-        <button id="btn-remove" class="danger">Remove</button>
-      </div>
-    </div>
+    </section>
+    <section class="tip">
+      <h2>Tips</h2>
+      <ul>
+        <li>Перетаскивай и растягивай элементы на холсте; <b>Shift</b> — крупный шаг, <b>Delete</b> — удалить, стрелки — сдвиг.</li>
+        <li>Markdown: **жирный**, *курсив*, переносы строк.</li>
+        <li>Пресеты — быстрые сцены; загрузка с лёгким fade.</li>
+      </ul>
+    </section>
   </aside>
 </main>
 
 <script>
-  window.APP_CFG = { grid: {{ cfg.grid|default(20) }}, cw: {{ cfg.canvasWidth }}, ch: {{ cfg.canvasHeight }} };
+  window.__CFG__ = {{ cfg | tojson | safe }};
+  window.__SCENE__ = {{ scene | tojson | safe }};
 </script>
-<script src="/static/mod_panel.js"></script>
+<script src="/static/mod_panel.js" defer></script>
 </body>
 </html>
