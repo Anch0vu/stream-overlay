@@ -1,21 +1,13 @@
 <!doctype html>
 <html>
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta charset="utf-8" />
   <title>Overlay</title>
-  <link rel="stylesheet" href="/static/overlay.css">
-  <style>
-    html,body{margin:0;height:100%;background:transparent}
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/static/overlay.css?v=20251005">
 </head>
 <body>
-  <div id="overlay-root" class="overlay-root"></div>
-
-  <script>
-    // передаём cfg из сервера (необязательно, но удобно)
-    window.__CFG__ = {{ cfg | tojson | safe }};
-  </script>
-  <script src="/static/overlay.js" defer></script>
+  <div id="stage" class="stage"></div>
+  <script src="/static/overlay.js?v=20251005"></script>
 </body>
 </html>

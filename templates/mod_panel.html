@@ -1,122 +1,101 @@
 <!doctype html>
 <html>
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Moderator Panel</title>
-  <link rel="stylesheet" href="/static/mod_panel.css">
+  <meta charset="utf-8">
+  <title>Overlay Control</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/static/mod_panel.css?v=20251005">
 </head>
 <body>
-<header>
-  <h1>Overlay Control</h1>
-  <div class="row">
-    <button id="btn-add-text">+ Text</button>
-    <button id="btn-add-image">+ Image URL</button>
-    <button id="btn-add-video">+ Video URL</button>
-    <button id="btn-add-timer">+ Timer</button>
-
-    <label class="upload">
-      <input type="file" id="file-upload" hidden>
-      Upload file
+  <header class="topbar">
+    <button id="btnAddText">+ Text</button>
+    <button id="btnAddImageUrl">+ Image URL</button>
+    <button id="btnAddVideoUrl">+ Video URL</button>
+    <label class="upload-btn">
+      <input type="file" id="fileInput" hidden>
+      <span>Upload file</span>
     </label>
-    <button id="btn-refresh-uploads">Refresh uploads</button>
+    <button id="btnRefreshUploads">Refresh uploads</button>
+    <button id="btnClearAll" class="danger">Clear all</button>
+  </header>
 
-    <button id="btn-undo">Undo (Ctrl+Z)</button>
-    <button id="btn-redo">Redo (Ctrl+Y)</button>
+  <main class="layout">
+    <!-- LEFT: items & uploads -->
+    <aside class="sidebar">
+      <section class="box">
+        <div class="box-title">Items</div>
+        <ul id="itemsList" class="list"></ul>
+      </section>
 
-    <label class="chk"><input type="checkbox" id="cb-snap" checked> Snap ({{cfg.grid}}px)</label>
-    <label class="chk"><input type="checkbox" id="cb-lockratio"> Lock ratio</label>
-
-    <button id="btn-clear" class="danger">Clear all</button>
-  </div>
-</header>
-
-<main>
-  <aside class="left">
-    <section>
-      <h2>Items</h2>
-      <ul id="items"></ul>
-    </section>
-
-    <section>
-      <h2>Uploads</h2>
-      <div class="row small">
-        <label>Folder
-          <select id="sel-folder"></select>
-        </label>
-        <button id="btn-mkdir">+ Folder</button>
-      </div>
-      <ul id="upload-list"></ul>
-    </section>
-
-    <section>
-      <h2>Presets</h2>
-      <div class="row small">
-        <input id="preset-name" placeholder="scene_name">
-        <button id="btn-save-preset">Save</button>
-      </div>
-      <div class="row small">
-        <select id="preset-list"></select>
-        <button id="btn-load-preset">Load (fade)</button>
-      </div>
-    </section>
-  </aside>
-
-  <section class="canvas-wrap">
-    <h2>Drag items here (virtual {{cfg.canvasWidth}}×{{cfg.canvasHeight}})</h2>
-    <div id="canvas" class="canvas"></div>
-  </section>
-
-  <aside class="right">
-    <section>
-      <h2>Selected</h2>
-      <div class="form">
-        <label>ID <input id="f-id" readonly></label>
-        <label>Kind
-          <select id="f-kind">
-            <option value="text">text</option>
-            <option value="image">image</option>
-            <option value="video">video</option>
-            <option value="audio">audio</option>
-          </select>
-        </label>
-        <label>Content (text or URL)
-          <textarea id="f-content" rows="6" placeholder="Markdown text or media URL"></textarea>
-        </label>
-        <div class="row">
-          <label>X <input id="f-x" type="number" step="1"></label>
-          <label>Y <input id="f-y" type="number" step="1"></label>
-          <label>W <input id="f-w" type="number" step="1"></label>
-          <label>H <input id="f-h" type="number" step="1"></label>
+      <section class="box">
+        <div class="box-title">
+          Uploads
+          <button id="btnMakeFolder" class="tiny" title="(placeholder)">+ Folder</button>
         </div>
-        <div class="row">
-          <label>Font size <input id="f-font" type="number" value="40"></label>
-          <label>Color <input id="f-color" type="color" value="#ffffff"></label>
-          <label>BG <input id="f-bg" type="text" value="transparent" placeholder="transparent or rgba(0,0,0,0.5)"></label>
-          <label>Z <input id="f-z" type="number" value="1"></label>
-        </div>
-        <div class="row">
-          <button id="btn-update">Update</button>
-          <button id="btn-front">Bring to front</button>
-          <button id="btn-remove" class="danger">Remove</button>
-        </div>
+        <ul id="uploadsList" class="list"></ul>
+      </section>
+    </aside>
+
+    <!-- CENTER: stage -->
+    <section class="stage-wrap">
+      <div class="stage-title">Drag items here (virtual 1920×1080)</div>
+      <div id="stage" class="stage">
+        <div id="surface" class="surface"></div>
       </div>
     </section>
-    <section class="tip">
-      <h2>Tips</h2>
-      <ul>
-        <li>Перетаскивай и растягивай элементы на холсте; <b>Shift</b> — крупный шаг, <b>Delete</b> — удалить, стрелки — сдвиг.</li>
-        <li>Markdown: **жирный**, *курсив*, переносы строк.</li>
-        <li>Пресеты — быстрые сцены; загрузка с лёгким fade.</li>
-      </ul>
-    </section>
-  </aside>
-</main>
 
-<script>
-  window.__CFG__ = {{ cfg | tojson | safe }};
-  window.__SCENE__ = {{ scene | tojson | safe }};
-</script>
-<script src="/static/mod_panel.js" defer></script>
+    <!-- RIGHT: selected -->
+    <aside class="sidebar right">
+      <section class="box">
+        <div class="box-title">Selected</div>
+        <div class="form">
+          <label>ID <input id="f_id" type="text" readonly></label>
+          <label>Kind
+            <select id="f_kind">
+              <option>text</option><option>image</option>
+              <option>video</option><option>audio</option>
+            </select>
+          </label>
+          <label>Content (text or URL)
+            <textarea id="f_content" rows="4" placeholder="Markdown text or media URL"></textarea>
+          </label>
+
+          <div class="grid2">
+            <label>X <input id="f_x" type="number" step="1"></label>
+            <label>Y <input id="f_y" type="number" step="1"></label>
+          </div>
+          <div class="grid2">
+            <label>W <input id="f_w" type="number" step="1"></label>
+            <label>H <input id="f_h" type="number" step="1"></label>
+          </div>
+
+            <label>Font size <input id="f_font" type="number" step="1" value="40"></label>
+          <div class="grid2">
+            <label>Color <input id="f_color" type="text" value="#ffffff"></label>
+            <label>BG <input id="f_bg" type="text" value="transparent"></label>
+          </div>
+          <label>Z <input id="f_z" type="number" step="1"></label>
+
+          <div class="row">
+            <button id="btnUpdate">Update</button>
+            <button id="btnFront">Bring to front</button>
+            <button id="btnRemove" class="danger">Remove</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="box">
+        <div class="box-title">Tips</div>
+        <ul class="tips">
+          <li>Перетаскивай блоки на холсте. Стрелки — по 1px (<b>Shift</b> — по 10px).</li>
+          <li><b>Delete</b> — удаляет выбранный блок.</li>
+          <li><b>Bring to front</b> — поднять слой.</li>
+          <li>Markdown для текста: “<i>жирный</i>”, “<i>курсив</i>”, списки, ссылки.</li>
+        </ul>
+      </section>
+    </aside>
+  </main>
+
+  <script src="/static/mod_panel.js?v=20251005"></script>
 </body>
 </html>

@@ -1,31 +1,4 @@
-.overlay-root {
-  position: relative;
-  width: 100vw;
-  height: 100vh;
-  overflow: hidden;
-}
-
-.item {
-  position: absolute;
-  pointer-events: none; /* overlay не интерактивен */
-}
-
-.item.text {
-  white-space: pre-wrap;
-  line-height: 1.15;
-  /* читаемость на светлом/шумном фоне */
-  text-shadow:
-    0 2px 6px rgba(0,0,0,0.6),
-    0 0 1px rgba(0,0,0,0.8);
-  -webkit-font-smoothing: antialiased;
-}
-
-.item img, .item video {
-  display: block;
-  max-width: 100%;
-  max-height: 100%;
-}
-
-.item video {
-  object-fit: contain;
-}
+html,body{margin:0;height:100%;background:#fff}
+.stage{position:relative;width:100vw;height:100vh;overflow:hidden;background:#ffffff}
+.layer{position:absolute;will-change:transform}
+.layer.text{color:#fff;text-shadow:0 2px 6px rgba(0,0,0,.7);white-space:pre-wrap}
