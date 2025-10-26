@@ -123,7 +123,7 @@ function startDrag(ev){
     const dx = Math.round((e.clientX-start.x)/step)*step;
     const dy = Math.round((e.clientY-start.y)/step)*step;
     it.x = clamp(start.ix + dx, 0, 1920);
-    it.y = clamp(start.iy + dy, 0, 1080);
+    it.y = clamp(start.iy + dy, 0, 2160);
     renderScene(); select(id);
   }
   function up(){
@@ -145,15 +145,21 @@ async function loadScene(){
 async function refreshUploads(){
   const ul = $("#uploadsList"); ul.innerHTML = "";
   let list = [];
-  try{ list = await GET(API.uploads); }catch(e){ console.warn(e); }
-  for(const name of list){
+  try{ list = (await GET(API.uploads)).files || []; }catch(e){ console.warn(e); }
+  for(const file of list){
+    const name = file.name;
+    const mime = file.mime;
+    let kind = 'image';
+    if(mime.startsWith('video/')) kind = 'video';
+    else if(mime.startsWith('audio/')) kind = 'audio';
+    else if(mime.startsWith('image/')) kind = 'image';
     const li = document.createElement('li');
-    li.innerHTML = `<span class="name">${name}</span>
+    li.innerHTML = `<span class="name">${name} (${kind})</span>
       <span class="btns">
         <button data-act="add">Add</button>
         <button data-act="del" class="danger">Del</button>
       </span>`;
-    li.querySelector('[data-act="add"]').onclick=()=>addItem('image', `/uploads/${name}`);
+    li.querySelector('[data-act="add"]').onclick=()=>addItem(kind, `/uploads/${file.rel}`);
     li.querySelector('[data-act="del"]').onclick=async()=>{
       await fetch(API.delUpload(name),{method:'DELETE'});
       refreshUploads();
@@ -170,8 +176,8 @@ window.addEventListener('keydown',e=>{
   if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){
     if(e.key==='ArrowLeft') it.x = clamp((it.x||0)-step,0,1920);
     if(e.key==='ArrowRight') it.x = clamp((it.x||0)+step,0,1920);
-    if(e.key==='ArrowUp') it.y = clamp((it.y||0)-step,0,1080);
-    if(e.key==='ArrowDown') it.y = clamp((it.y||0)+step,0,1080);
+    if(e.key==='ArrowUp') it.y = clamp((it.y||0)-step,0,2160);
+    if(e.key==='ArrowDown') it.y = clamp((it.y||0)+step,0,2160);
     renderScene(); select(it.id); saveScene();
   }
   if(e.key==='Delete'){ removeItem(it.id); }

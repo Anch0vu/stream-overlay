@@ -1,30 +1,91 @@
-const stage = document.getElementById('stage');
-const API_SCENE = '/api/scene';
+/* Overlay renderer (минимальный): тянет сцену и синхронизирует mediaLayer */
+(async function(){
+  const STAGE = document.getElementById('stage'); // твой прозрачный контейнер
+  const API = location.origin;
 
-function applyScene(scene){
-  if(!scene || !scene.items) return;
-  stage.innerHTML = '';
-  for(const it of scene.items){
-    let el;
-    if(it.kind==='text'){ el = document.createElement('div'); el.className='layer text'; el.textContent = it.content||''; el.style.fontSize=(it.font||40)+'px'; el.style.color=it.color||'#fff'; el.style.background=it.bg||'transparent'; }
-    else if(it.kind==='image'){ el = document.createElement('img'); el.className='layer'; el.src = it.content||''; }
-    else if(it.kind==='video'){ el = document.createElement('video'); el.className='layer'; el.src = it.content||''; el.autoplay=true; el.loop=true; el.muted=true; }
-    else if(it.kind==='audio'){ el = document.createElement('audio'); el.className='layer'; el.src = it.content||''; el.autoplay=true; el.controls=false; }
-    if(!el) continue;
-    el.style.left=(it.x||0)+'px'; el.style.top=(it.y||0)+'px';
-    if(it.w) el.style.width=it.w+'px'; if(it.h) el.style.height=it.h+'px';
-    el.style.zIndex=it.z||1;
-    stage.appendChild(el);
+  // локальный кэш того, что сейчас играет
+  const current = new Map(); // id -> url
+
+  function desiredMediaFromScene(scene){
+    const out = [];
+    if (!scene || !Array.isArray(scene.items)) return out;
+    for (const it of scene.items) {
+      if (!it || !it.kind) continue;
+      const k = String(it.kind).toLowerCase();
+      if (k === 'audio' || k === 'video') {
+        const url = (it.content || '').trim();
+        if (!url) continue;
+        // если ввели относительный путь в модере, нормализуем
+        const abs = url.startsWith('http') ? url : (API + (url.startsWith('/')?url:'/'+url));
+        out.push({
+          id: String(it.id || it._id || ('m_'+Math.random().toString(36).slice(2))),
+          url: abs,
+          type: k,
+          loop: !!it.loop,               // если нет в сцене — по умолчанию true ниже
+          volume: isFinite(it.volume) ? Math.max(0, Math.min(1, it.volume)) : 1.0,
+          muted: !!it.muted
+        });
+      }
+    }
+    return out;
   }
-}
 
-async function loadOnce(){
-  try{ const r = await fetch(API_SCENE); if(r.ok){ applyScene(await r.json()); } }catch{}
-}
-loadOnce(); setInterval(loadOnce, 1500);
+  function syncMedia(desired){
+    const want = new Map(desired.map(d => [d.id, d]));
 
-/* WebSocket (best-effort) */
-try{
-  const ws = new WebSocket((location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/ws/overlay');
-  ws.onmessage = (e)=>{ try{ const data = JSON.parse(e.data); if(data && data.items) applyScene(data); }catch{} };
-}catch(e){}
+    // удалить лишние
+    for (const [id, url] of Array.from(current.entries())) {
+      if (!want.has(id)) {
+        mediaLayer.stopMedia(id);
+        current.delete(id);
+      }
+    }
+
+    // добавить/обновить нужные
+    for (const d of desired) {
+      const prevUrl = current.get(d.id);
+      const loop = (typeof d.loop === 'boolean') ? d.loop : true;
+      if (prevUrl === d.url) {
+        // уже играет — обновим только громкость/луп/мьют
+        mediaLayer.playMedia(d.id, d.url, {type:d.type, loop, volume:d.volume, muted:d.muted});
+        continue;
+      }
+      // новый или изменился URL — запускаем
+      mediaLayer.playMedia(d.id, d.url, {type:d.type, loop, volume:d.volume, muted:d.muted});
+      current.set(d.id, d.url);
+    }
+  }
+
+  async function fetchScene(){
+    const r = await fetch(API + '/api/scene', {cache:'no-cache'});
+    return r.ok ? r.json() : {items:[]};
+  }
+
+  // первичная загрузка
+  try { syncMedia(desiredMediaFromScene(await fetchScene())); } catch(e){ console.error(e); }
+
+  // WebSocket обновления
+  function connectWS(){
+    const ws = new WebSocket((location.protocol==='https:'?'wss://':'ws://') + location.host + '/ws/overlay');
+    ws.addEventListener('open', ()=>{
+      // попытка «раскачать» автоплей в OBS/браузере
+      try { mediaLayer._players && Array.from(mediaLayer._players.values()).forEach(p => p.el && p.el.play && p.el.play()); } catch(_){}
+    });
+    ws.addEventListener('message', (ev)=>{
+      try{
+        const msg = JSON.parse(ev.data);
+        if (msg?.type === 'scene.full' || msg?.type === 'scene.update') {
+          syncMedia(desiredMediaFromScene(msg.scene || msg.data || {}));
+        }
+      }catch(e){ console.error(e); }
+    });
+    ws.addEventListener('close', ()=> setTimeout(connectWS, 1000));
+    ws.addEventListener('error', ()=> { try{ ws.close(); }catch(_){ } });
+  }
+  connectWS();
+
+  // на всякий — периодический поллинг, если WS где-то режется
+  setInterval(async ()=>{
+    try { syncMedia(desiredMediaFromScene(await fetchScene())); } catch(_){}
+  }, 5000);
+})();

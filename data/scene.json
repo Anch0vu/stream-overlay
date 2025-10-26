@@ -1,17 +1,17 @@
 {
   "items": [
     {
-      "id": "image-1759610810013",
-      "kind": "image",
-      "content": "/uploads/RDT_20250929_2203146880809371849032154_344150b7.jpg",
-      "x": 331,
-      "y": 314,
-      "w": 600,
-      "h": 300,
+      "id": "audiot9tp8kqg",
+      "kind": "audio",
+      "content": "/uploads/Tame Impala - Dracula.mp3",
+      "x": 100,
+      "y": 100,
       "z": 1,
+      "w": 300,
+      "h": 0,
+      "font": 40,
       "color": "#ffffff",
-      "bg": "transparent",
-      "fontSize": 40
+      "bg": "transparent"
     }
   ]
 }
