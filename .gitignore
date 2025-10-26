@@ -20,3 +20,15 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+uploads/
+*.mp3
+*.mp4
+*.jpg
+*.png
+uploads/
+*.log
+*.mp3
+*.mp4
+*.jpg
+*.png
+.env
