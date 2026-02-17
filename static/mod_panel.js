@@ -6,7 +6,8 @@ const API = {
   scene: "/api/scene",
   uploads: "/api/uploads",
   upload: "/upload",                 // POST multipart file
-  delUpload: name => `/api/uploads/${encodeURIComponent(name)}`
+  delUpload: name => `/api/uploads/${encodeURIComponent(name)}`,
+  ttsSpeak: "/api/tts/speak"
 };
 
 const state = {
@@ -114,6 +115,34 @@ function addItem(kind, content=''){
 
 async function saveScene(){ try{ await PUT(API.scene, state.scene); }catch(e){ console.error(e); } }
 
+async function speakTts(){
+  const text = ($("#tts_text")?.value || "").trim();
+  if(!text){
+    alert('Введите текст для TTS');
+    return;
+  }
+
+  const payload = {
+    text,
+    lang: ($("#tts_lang")?.value || 'ru-RU').trim() || 'ru-RU',
+    rate: +($("#tts_rate")?.value || 1),
+    pitch: +($("#tts_pitch")?.value || 1),
+    volume: +($("#tts_volume")?.value || 1),
+  };
+
+  try{
+    const r = await fetch(API.ttsSpeak, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    if(!r.ok) throw new Error('TTS API failed');
+  }catch(e){
+    console.error(e);
+    alert('Не удалось отправить TTS');
+  }
+}
+
 function startDrag(ev){
   const id = ev.currentTarget.dataset.id; select(id);
   const it = state.getItem(id); if(!it) return;
@@ -191,6 +220,7 @@ $("#btnFront").onclick = bringToFront;
 $("#btnRemove").onclick = ()=> state.selected && removeItem(state.selected);
 $("#btnUpdate").onclick = updateFromForm;
 $("#btnClearAll").onclick = ()=>{ if(confirm('Clear all items?')) { state.scene.items=[]; saveScene(); renderScene(); } };
+$("#btnTtsSpeak") && ($("#btnTtsSpeak").onclick = speakTts);
 
 $("#btnRefreshUploads").onclick = refreshUploads;
 $("#fileInput").addEventListener('change', async (e)=>{
