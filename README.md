@@ -82,7 +82,6 @@ JSON body:
   - `app-uploads` → `/app/uploads`
   - `app-data` → `/app/data`
 
-
 ## QoL / производительность
 
 - В `mod_panel` сохранение сцены идёт через debounce/batch (меньше лишних PUT при drag/клавишах).
@@ -99,6 +98,15 @@ JSON body:
 - `POST /api/twitch/simulate-event` — симуляция события чата (требуется `x-streamer-token`).
 
 Поддержан базовый сценарий: сообщение `!tts <текст>` от роли из `allowed_roles_for_tts` запускает TTS в overlay с cooldown.
+
+
+## Проверка merge-конфликтов
+
+Перед пушем можно быстро проверить, что в репозитории не осталось маркеров `<<<<<<<`, `=======`, `>>>>>>>`:
+
+```bash
+./scripts/check_merge_conflicts.sh
+```
 
 ## Ограничения текущего MVP
 
