@@ -82,32 +82,6 @@ JSON body:
   - `app-uploads` → `/app/uploads`
   - `app-data` → `/app/data`
 
-## QoL / производительность
-
-- В `mod_panel` сохранение сцены идёт через debounce/batch (меньше лишних PUT при drag/клавишах).
-- Каждое сохранение сцены получает версию (`_version`) и рассылается как `scene.full` с `version` и `server_ts`.
-- Overlay отправляет подтверждение применения версии в `POST /api/overlay/applied`.
-- Сводка realtime-метрик доступна по `GET /api/metrics/realtime`.
-
-## Twitch bridge (MVP skeleton)
-
-Добавлены отладочные endpoints для будущей Twitch-интеграции:
-
-- `GET /api/twitch/rules` — текущие правила обработки событий.
-- `POST /api/twitch/rules` — обновление правил (требуется `x-streamer-token`).
-- `POST /api/twitch/simulate-event` — симуляция события чата (требуется `x-streamer-token`).
-
-Поддержан базовый сценарий: сообщение `!tts <текст>` от роли из `allowed_roles_for_tts` запускает TTS в overlay с cooldown.
-
-
-## Проверка merge-конфликтов
-
-Перед пушем можно быстро проверить, что в репозитории не осталось маркеров `<<<<<<<`, `=======`, `>>>>>>>`:
-
-```bash
-./scripts/check_merge_conflicts.sh
-```
-
 ## Ограничения текущего MVP
 
 - `webrtc-node` пока заглушка-контейнер для дальнейшей интеграции mediasoup/pion.

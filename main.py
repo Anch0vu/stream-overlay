@@ -6,7 +6,6 @@ import os
 import shutil
 import time
 import uuid
-from collections import deque
 from urllib.parse import unquote
 
 from fastapi import (
@@ -95,50 +94,6 @@ overlay_clients: set[WebSocket] = set()
 moderator_clients: set[WebSocket] = set()
 
 redis_client: Redis | None = None
-
-# Текущее состояние версии сцены для delta/full синхронизации.
-scene_state = {"version": int(scene.get("_version", 0)) if isinstance(scene, dict) else 0}
-
-# Метрики реального времени для QoL и диагностики.
-runtime_metrics = {
-    "scene_saves": 0,
-    "ws_broadcasts": 0,
-    "overlay_apply_reports": 0,
-    "overlay_apply_latency_ms": deque(maxlen=300),
-    "twitch_events_total": 0,
-    "twitch_tts_triggered": 0,
-    "twitch_tts_last_ts": 0.0,
-}
-
-# Простые правила для Twitch-bridge (MVP skeleton).
-twitch_rules = {
-    "allowed_roles_for_tts": ["streamer", "mod", "vip"],
-    "tts_command_prefix": "!tts ",
-    "tts_cooldown_sec": 3,
-}
-
-
-def bump_scene_version() -> int:
-    # Увеличение версии сцены после каждого подтвержденного изменения.
-    scene_state["version"] += 1
-    return scene_state["version"]
-
-
-def scene_payload(scene_obj: dict) -> dict:
-    # Унифицированная нагрузка полной сцены с версией и timestamp.
-    return {
-        "type": "scene.full",
-        "scene": scene_obj,
-        "version": scene_state["version"],
-        "server_ts": int(time.time() * 1000),
-    }
-
-
-def metrics_latency_avg(values) -> float:
-    # Средняя задержка применения сцены на overlay.
-    if not values:
-        return 0.0
-    return round(sum(values) / len(values), 2)
 
 
 @app.on_event("startup")
@@ -389,7 +344,7 @@ async def ws_moderator(ws: WebSocket):
         await validate_moderator_session(session)
 
         moderator_clients.add(ws)
-        await ws.send_json(scene_payload(load_scene()))
+        await ws.send_json({"type": "scene.full", "scene": load_scene()})
 
         while True:
             data = await ws.receive_json()
@@ -401,8 +356,7 @@ async def ws_moderator(ws: WebSocket):
                 scene_data.setdefault("items", [])
                 scene_data["items"].append(item)
                 save_scene(scene_data)
-                bump_scene_version()
-                await ws_broadcast({"type": "scene.add", "item": item, "version": scene_state["version"]})
+                await ws_broadcast({"type": "scene.add", "item": item})
 
             elif t == "update":
                 item = data.get("item", {}) or {}
@@ -415,16 +369,14 @@ async def ws_moderator(ws: WebSocket):
                 else:
                     items.append(item)
                 save_scene(scene_data)
-                bump_scene_version()
-                await ws_broadcast({"type": "scene.update", "item": item, "version": scene_state["version"]})
+                await ws_broadcast({"type": "scene.update", "item": item})
 
             elif t == "remove":
                 _id = data.get("id")
                 scene_data = load_scene()
                 scene_data["items"] = [it for it in scene_data.get("items", []) if it.get("id") != _id]
                 save_scene(scene_data)
-                bump_scene_version()
-                await ws_broadcast({"type": "scene.remove", "id": _id, "version": scene_state["version"]})
+                await ws_broadcast({"type": "scene.remove", "id": _id})
 
             elif t == "bringToFront":
                 _id = data.get("id")
@@ -436,14 +388,12 @@ async def ws_moderator(ws: WebSocket):
                         it["z"] = maxz + 1
                         break
                 save_scene(scene_data)
-                bump_scene_version()
-                await ws_broadcast(scene_payload(scene_data))
+                await ws_broadcast({"type": "scene.full", "scene": scene_data})
 
             elif t == "clear":
                 scene_data = {"items": []}
                 save_scene(scene_data)
-                bump_scene_version()
-                await ws_broadcast({"type": "scene.clear", "version": scene_state["version"]})
+                await ws_broadcast({"type": "scene.clear"})
     except WebSocketDisconnect:
         pass
     except Exception as e:
@@ -457,7 +407,7 @@ async def ws_overlay(ws: WebSocket):
     await ws.accept()
     overlay_clients.add(ws)
     try:
-        await ws.send_text(json.dumps(scene_payload(load_scene()), ensure_ascii=False))
+        await ws.send_text(json.dumps({"type": "scene.full", "scene": load_scene()}, ensure_ascii=False))
         while True:
             await asyncio.sleep(60)
     except WebSocketDisconnect:
@@ -482,9 +432,10 @@ def fb_get_scene():
         return {"items": [], "_version": scene_state["version"]}
 
 
+
 @_api_fb.put("/api/scene")
 async def fb_put_scene(payload: dict):
-    # Сохраняем сцену батчем и пушим полную версию только по факту изменения.
+    # Сохраняем сцену и сразу пушим полный снапшот в overlay/moderator.
     if not isinstance(payload, dict):
         raise HTTPException(400, "payload must be object")
 
@@ -496,15 +447,8 @@ async def fb_put_scene(payload: dict):
     os.makedirs(os.path.dirname(SCENE_PATH), exist_ok=True)
     with open(SCENE_PATH, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
-
-    runtime_metrics["scene_saves"] += 1
-    await ws_broadcast(scene_payload(payload))
-    return JSONResponse({
-        "ok": True,
-        "version": new_version,
-        "server_ts": int(time.time() * 1000),
-        "echo_client_ts": meta.get("client_ts"),
-    })
+    await ws_broadcast({"type": "scene.full", "scene": payload})
+    return JSONResponse({"ok": True})
 
 
 @_api_fb.delete("/api/uploads/{name}")
@@ -571,121 +515,6 @@ async def api_tts_speak(request: Request, payload: dict = Body(...)):
     }
     await ws_broadcast(message, targets=overlay_clients)
     return {"ok": True, **message}
-
-
-@app.post("/api/overlay/applied")
-async def api_overlay_applied(payload: dict = Body(...)):
-    # Overlay сообщает факт применения версии сцены для расчета задержки.
-    runtime_metrics["overlay_apply_reports"] += 1
-    version = int(payload.get("version") or 0)
-    client_ts = payload.get("client_ts")
-    server_ts = payload.get("server_ts")
-
-    try:
-        if server_ts is not None:
-            latency = int(time.time() * 1000) - int(server_ts)
-            if 0 <= latency <= 600000:
-                runtime_metrics["overlay_apply_latency_ms"].append(latency)
-    except Exception:
-        pass
-
-    return {
-        "ok": True,
-        "version": version,
-        "received_client_ts": client_ts,
-    }
-
-
-@app.get("/api/metrics/realtime")
-async def api_metrics_realtime():
-    # Сводка метрик QoL/производительности для панели диагностики.
-    latencies = list(runtime_metrics["overlay_apply_latency_ms"])
-    return {
-        "ok": True,
-        "scene_version": scene_state["version"],
-        "scene_saves": runtime_metrics["scene_saves"],
-        "ws_broadcasts": runtime_metrics["ws_broadcasts"],
-        "overlay_apply_reports": runtime_metrics["overlay_apply_reports"],
-        "overlay_apply_latency_avg_ms": metrics_latency_avg(latencies),
-        "overlay_apply_latency_p95_ms": (sorted(latencies)[int(len(latencies) * 0.95)] if latencies else 0),
-        "twitch_events_total": runtime_metrics["twitch_events_total"],
-        "twitch_tts_triggered": runtime_metrics["twitch_tts_triggered"],
-    }
-
-
-@app.get("/api/twitch/rules")
-async def api_twitch_rules():
-    # Чтение текущих правил Twitch-bridge (MVP skeleton).
-    return {"ok": True, "rules": twitch_rules}
-
-
-@app.post("/api/twitch/rules")
-async def api_set_twitch_rules(request: Request, payload: dict = Body(...)):
-    # Обновление правил Twitch-bridge стримером.
-    token = request.headers.get("x-streamer-token")
-    if token != STREAMER_API_TOKEN:
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-    roles = payload.get("allowed_roles_for_tts")
-    if isinstance(roles, list) and roles:
-        twitch_rules["allowed_roles_for_tts"] = [str(x).lower() for x in roles]
-    if isinstance(payload.get("tts_command_prefix"), str) and payload.get("tts_command_prefix").strip():
-        twitch_rules["tts_command_prefix"] = payload.get("tts_command_prefix")
-    if payload.get("tts_cooldown_sec") is not None:
-        twitch_rules["tts_cooldown_sec"] = max(1, int(payload.get("tts_cooldown_sec")))
-
-    return {"ok": True, "rules": twitch_rules}
-
-
-@app.post("/api/twitch/simulate-event")
-async def api_twitch_simulate_event(request: Request, payload: dict = Body(...)):
-    # MVP-инжест события чата Twitch для отладки интеграции.
-    token = request.headers.get("x-streamer-token")
-    if token != STREAMER_API_TOKEN:
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-    runtime_metrics["twitch_events_total"] += 1
-    event_type = str(payload.get("type") or "chat.message")
-    user = str(payload.get("user") or "unknown")
-    role = str(payload.get("role") or "viewer").lower()
-    text = str(payload.get("text") or "")
-
-    event_msg = {
-        "type": "twitch.event",
-        "event": {
-            "type": event_type,
-            "user": user,
-            "role": role,
-            "text": text,
-            "server_ts": int(time.time() * 1000),
-        },
-    }
-    await ws_broadcast(event_msg, targets=moderator_clients)
-
-    prefix = str(twitch_rules.get("tts_command_prefix") or "!tts ")
-    allowed_roles = set(x.lower() for x in twitch_rules.get("allowed_roles_for_tts", []))
-    cooldown = int(twitch_rules.get("tts_cooldown_sec", 3))
-
-    if event_type == "chat.message" and text.lower().startswith(prefix.lower()) and role in allowed_roles:
-        now = time.time()
-        last_ts = float(runtime_metrics.get("twitch_tts_last_ts") or 0)
-        if now - last_ts >= cooldown:
-            tts_text = text[len(prefix):].strip()
-            if tts_text:
-                runtime_metrics["twitch_tts_last_ts"] = now
-                runtime_metrics["twitch_tts_triggered"] += 1
-                await ws_broadcast({
-                    "type": "tts.speak",
-                    "text": tts_text,
-                    "lang": "ru-RU",
-                    "rate": 1.0,
-                    "pitch": 1.0,
-                    "volume": 1.0,
-                    "source": "twitch",
-                    "user": user,
-                }, targets=overlay_clients)
-
-    return {"ok": True, "event": event_msg["event"]}
 
 
 if __name__ == "__main__":

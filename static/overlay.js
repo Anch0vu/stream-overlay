@@ -1,20 +1,28 @@
-/* Overlay renderer: sync сцены, media, TTS и отчеты latency/QoL. */
+/* Overlay renderer: устойчивый sync без лишних перезапусков media + поддержка TTS. */
 (async function(){
   const API = location.origin;
   const STAGE = document.getElementById('stage');
 
+  // Текущее состояние сцены в overlay для применения delta-событий.
   const localScene = { items: [] };
+  // Кэш уже играющих media (id -> url).
   const currentMedia = new Map();
+  // Хэш последнего медиа-среза, чтобы не дёргать плееры без изменений.
   let lastMediaHash = '';
+  // Хэш визуального среза (текст/изображения), чтобы не делать лишний full repaint.
   let lastVisualHash = '';
+  // Метка живого websocket, чтобы fallback-поллинг не работал постоянно.
   let wsAlive = false;
-  let lastAppliedVersion = 0;
 
   function normalizeMediaUrl(url){
     const raw = (url || '').trim();
     if (!raw) return '';
     if (/^https?:\/\//i.test(raw)) return raw;
     return API + (raw.startsWith('/') ? raw : '/' + raw);
+  }
+
+  function normalizeVisualUrl(url){
+    return normalizeMediaUrl(url);
   }
 
   function mediaItems(scene){
@@ -67,7 +75,7 @@
       } else {
         out.push({
           ...base,
-          content: normalizeMediaUrl(it.content || it.src || ''),
+          content: normalizeVisualUrl(it.content || it.src || ''),
         });
       }
     }
@@ -120,6 +128,8 @@
     lastMediaHash = newHash;
 
     const wanted = new Map(desired.map((d) => [d.id, d]));
+
+    // Убираем только реально отсутствующие элементы.
     for (const [id] of Array.from(currentMedia.entries())) {
       if (!wanted.has(id)) {
         mediaLayer.stopMedia(id);
@@ -127,6 +137,7 @@
       }
     }
 
+    // Добавляем/обновляем только изменившиеся.
     for (const d of desired) {
       const prev = currentMedia.get(d.id);
       mediaLayer.playMedia(d.id, d.url, {
@@ -137,6 +148,58 @@
       });
       if (prev !== d.url) currentMedia.set(d.id, d.url);
     }
+  }
+
+  function applySceneFull(scene){
+    localScene.items = Array.isArray(scene?.items) ? scene.items.slice() : [];
+    renderVisuals(localScene);
+    syncMedia(localScene);
+  }
+
+  function applySceneDelta(msg){
+    const type = msg?.type;
+    const items = localScene.items;
+
+    if (type === 'scene.add' && msg.item) {
+      items.push(msg.item);
+      renderVisuals(localScene);
+      syncMedia(localScene);
+      return;
+    }
+    if (type === 'scene.update' && msg.item) {
+      const idx = items.findIndex((x) => x.id === msg.item.id);
+      if (idx >= 0) items[idx] = msg.item;
+      else items.push(msg.item);
+      renderVisuals(localScene);
+      syncMedia(localScene);
+      return;
+    }
+    if (type === 'scene.remove') {
+      const idx = items.findIndex((x) => x.id === msg.id);
+      if (idx >= 0) items.splice(idx, 1);
+      renderVisuals(localScene);
+      syncMedia(localScene);
+      return;
+    }
+    if (type === 'scene.clear') {
+      localScene.items = [];
+      renderVisuals(localScene);
+      syncMedia(localScene);
+    }
+  }
+
+  function speakTts(payload){
+    // TTS работает в браузерном движке (OBS Browser Source/Chrome).
+    if (!('speechSynthesis' in window)) return;
+    const text = String(payload?.text || '').trim();
+    if (!text) return;
+
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = payload?.lang || 'ru-RU';
+    utter.rate = Number.isFinite(payload?.rate) ? payload.rate : 1;
+    utter.pitch = Number.isFinite(payload?.pitch) ? payload.pitch : 1;
+    utter.volume = Number.isFinite(payload?.volume) ? Math.max(0, Math.min(1, payload.volume)) : 1;
+    window.speechSynthesis.speak(utter);
   }
 
   async function reportApplied(version, serverTs){
@@ -217,8 +280,7 @@
 
   async function bootstrap(){
     try {
-      const scene = await fetchScene();
-      applySceneFull({ scene, version: Number(scene?._version || 0), server_ts: Date.now() });
+      applySceneFull(await fetchScene());
     } catch (e) {
       console.error('bootstrap scene failed', e);
     }
@@ -234,7 +296,7 @@
     ws.addEventListener('message', (ev) => {
       try {
         const msg = JSON.parse(ev.data);
-        if (msg?.type === 'scene.full') applySceneFull(msg);
+        if (msg?.type === 'scene.full') applySceneFull(msg.scene || {});
         else if (msg?.type?.startsWith('scene.')) applySceneDelta(msg);
         else if (msg?.type === 'tts.speak') speakTts(msg);
       } catch (e) {
@@ -252,13 +314,10 @@
     });
   }
 
-  // Fallback-опрос только когда WS недоступен.
+  // Fallback: проверяем сцену редко и только если websocket не жив.
   setInterval(async () => {
     if (wsAlive) return;
-    try {
-      const scene = await fetchScene();
-      applySceneFull({ scene, version: Number(scene?._version || 0), server_ts: Date.now() });
-    } catch (_) {}
+    try { applySceneFull(await fetchScene()); } catch (_) {}
   }, 10000);
 
   await bootstrap();
