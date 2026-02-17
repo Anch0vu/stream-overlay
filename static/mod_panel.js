@@ -5,12 +5,9 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 const API = {
   scene: "/api/scene",
   uploads: "/api/uploads",
-  upload: "/upload",
+  upload: "/upload",                 // POST multipart file
   delUpload: name => `/api/uploads/${encodeURIComponent(name)}`,
-  ttsSpeak: "/api/tts/speak",
-  metrics: "/api/metrics/realtime",
-  webrtcToken: "/api/webrtc/token",
-  webrtcRoomStats: room => `/api/webrtc/rooms/${encodeURIComponent(room)}/stats`,
+  ttsSpeak: "/api/tts/speak"
 };
 
 const state = {
@@ -211,58 +208,31 @@ function addItem(kind, content = ''){
   scheduleSaveScene(0);
 }
 
-
-
-function updateMetricCell(id, value){
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.textContent = String(value);
-}
-
-async function refreshDiagnostics(){
-  // Обновляем realtime-метрики QoL и статус WebRTC комнаты.
-  try{
-    const m = await GET(API.metrics);
-    updateMetricCell('m_scene_version', m.scene_version ?? '-');
-    updateMetricCell('m_latency_avg', m.overlay_apply_latency_avg_ms ?? '-');
-    updateMetricCell('m_latency_p95', m.overlay_apply_latency_p95_ms ?? '-');
-    updateMetricCell('m_ws_broadcasts', m.ws_broadcasts ?? '-');
-    updateMetricCell('m_webrtc_rooms', m.webrtc_rooms_active ?? '-');
-    updateMetricCell('m_signaling', m.webrtc_signaling_messages ?? '-');
-  }catch(e){
-    console.warn(e);
+async function speakTts(){
+  const text = ($("#tts_text")?.value || "").trim();
+  if(!text){
+    alert('Введите текст для TTS');
+    return;
   }
 
-  const room = (document.getElementById('webrtc_room')?.value || '').trim();
-  if(!room) return;
-  try{
-    const rs = await GET(API.webrtcRoomStats(room));
-    updateMetricCell('m_pub_online', rs.publisher_online ? 'yes' : 'no');
-    updateMetricCell('m_viewers', rs.viewers ?? 0);
-  }catch(e){
-    console.warn(e);
-  }
-}
+  const payload = {
+    text,
+    lang: ($("#tts_lang")?.value || 'ru-RU').trim() || 'ru-RU',
+    rate: +($("#tts_rate")?.value || 1),
+    pitch: +($("#tts_pitch")?.value || 1),
+    volume: +($("#tts_volume")?.value || 1),
+  };
 
-async function generateWebrtcToken(role){
-  // Генерация signed-токена для signaling websocket.
-  const room = (document.getElementById('webrtc_room')?.value || '').trim() || 'main-room';
   try{
-    const r = await fetch(API.webrtcToken, {
+    const r = await fetch(API.ttsSpeak, {
       method:'POST',
-      headers:{
-        'Content-Type':'application/json',
-        'x-streamer-token': window.prompt('Введите STREAMER токен для выдачи WebRTC ключа:') || '',
-      },
-      body: JSON.stringify({room, role, ttl: 300}),
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
     });
-    if(!r.ok) throw new Error('token api failed');
-    const data = await r.json();
-    const out = document.getElementById('webrtc_ws_url');
-    if(out) out.value = data.ws_url || '';
+    if(!r.ok) throw new Error('TTS API failed');
   }catch(e){
     console.error(e);
-    alert('Не удалось сгенерировать WebRTC токен');
+    alert('Не удалось отправить TTS');
   }
 }
 
@@ -285,7 +255,7 @@ async function speakTts(){
     const r = await fetch(API.ttsSpeak, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(payload),
+      body: JSON.stringify(payload)
     });
     if(!r.ok) throw new Error('TTS API failed');
   }catch(e){
@@ -394,16 +364,8 @@ $("#btnAddVideoUrl").onclick = () => { const u = prompt('Video URL:'); if(u) add
 $("#btnFront").onclick = bringToFront;
 $("#btnRemove").onclick = () => state.selected && removeItem(state.selected);
 $("#btnUpdate").onclick = updateFromForm;
-$("#btnClearAll").onclick = () => {
-  if(confirm('Clear all items?')) {
-    state.scene.items = [];
-    renderScene();
-    scheduleSaveScene(0);
-  }
-};
+$("#btnClearAll").onclick = ()=>{ if(confirm('Clear all items?')) { state.scene.items=[]; saveScene(); renderScene(); } };
 $("#btnTtsSpeak") && ($("#btnTtsSpeak").onclick = speakTts);
-$("#btnGenViewerToken") && ($("#btnGenViewerToken").onclick = () => generateWebrtcToken("viewer"));
-$("#btnGenPublisherToken") && ($("#btnGenPublisherToken").onclick = () => generateWebrtcToken("publisher"));
 
 $("#btnRefreshUploads").onclick = refreshUploads;
 $("#fileInput").addEventListener('change', async (e) => {
@@ -418,8 +380,3 @@ $("#fileInput").addEventListener('change', async (e) => {
 
 loadScene();
 refreshUploads();
-
-
-// Периодический опрос диагностических метрик для панели.
-setInterval(refreshDiagnostics, 2000);
-refreshDiagnostics();

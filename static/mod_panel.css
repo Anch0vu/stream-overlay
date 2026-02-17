@@ -150,9 +150,3 @@ textarea{resize:vertical;min-height:96px}
   .layout{grid-template-columns:1fr;padding:10px}
   .command-box .command-grid{grid-template-columns:1fr 1fr}
 }
-
-
-.diag-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
-.diag-grid>div{background:#101420;border:1px solid var(--line);border-radius:10px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center}
-.diag-grid span{color:var(--muted);font-size:12px}
-.diag-grid b{color:#dce4ff;font-size:13px}
