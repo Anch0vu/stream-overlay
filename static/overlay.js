@@ -202,6 +202,76 @@
     window.speechSynthesis.speak(utter);
   }
 
+  async function reportApplied(version, serverTs){
+    // Отправляем телеметрию применения для QoL-метрик.
+    if (!Number.isFinite(version) || version <= lastAppliedVersion) return;
+    lastAppliedVersion = version;
+    try {
+      await fetch(API + '/api/overlay/applied', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          version,
+          server_ts: serverTs,
+          client_ts: Date.now(),
+        }),
+      });
+    } catch (_) {}
+  }
+
+  function applySceneFull(msg){
+    const scene = msg?.scene || {};
+    localScene.items = Array.isArray(scene.items) ? scene.items.slice() : [];
+    renderVisuals(localScene);
+    syncMedia(localScene);
+    reportApplied(Number(msg?.version || scene?._version || 0), msg?.server_ts);
+  }
+
+  function applySceneDelta(msg){
+    const type = msg?.type;
+    const items = localScene.items;
+
+    if (type === 'scene.add' && msg.item) {
+      items.push(msg.item);
+      renderVisuals(localScene);
+      syncMedia(localScene);
+      return;
+    }
+    if (type === 'scene.update' && msg.item) {
+      const idx = items.findIndex((x) => x.id === msg.item.id);
+      if (idx >= 0) items[idx] = msg.item;
+      else items.push(msg.item);
+      renderVisuals(localScene);
+      syncMedia(localScene);
+      return;
+    }
+    if (type === 'scene.remove') {
+      const idx = items.findIndex((x) => x.id === msg.id);
+      if (idx >= 0) items.splice(idx, 1);
+      renderVisuals(localScene);
+      syncMedia(localScene);
+      return;
+    }
+    if (type === 'scene.clear') {
+      localScene.items = [];
+      renderVisuals(localScene);
+      syncMedia(localScene);
+    }
+  }
+
+  function speakTts(payload){
+    if (!('speechSynthesis' in window)) return;
+    const text = String(payload?.text || '').trim();
+    if (!text) return;
+
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = payload?.lang || 'ru-RU';
+    utter.rate = Number.isFinite(payload?.rate) ? payload.rate : 1;
+    utter.pitch = Number.isFinite(payload?.pitch) ? payload.pitch : 1;
+    utter.volume = Number.isFinite(payload?.volume) ? Math.max(0, Math.min(1, payload.volume)) : 1;
+    window.speechSynthesis.speak(utter);
+  }
+
   async function fetchScene(){
     const r = await fetch(API + '/api/scene', { cache: 'no-cache' });
     if (!r.ok) return { items: [] };

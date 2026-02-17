@@ -144,6 +144,7 @@ async def enforce_rate_limit(subject: str, bucket: str, limit: int, window_sec: 
 
 
 async def ws_broadcast(msg: dict, targets=None):
+    runtime_metrics["ws_broadcasts"] += 1
     data = json.dumps(msg, ensure_ascii=False)
     targets = targets or (overlay_clients | moderator_clients)
     dead = []
@@ -424,9 +425,12 @@ _api_fb = APIRouter()
 def fb_get_scene():
     try:
         with open(SCENE_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            data.setdefault("_version", scene_state["version"])
+            return data
     except FileNotFoundError:
-        return {"items": []}
+        return {"items": [], "_version": scene_state["version"]}
+
 
 
 @_api_fb.put("/api/scene")
@@ -434,7 +438,12 @@ async def fb_put_scene(payload: dict):
     # Сохраняем сцену и сразу пушим полный снапшот в overlay/moderator.
     if not isinstance(payload, dict):
         raise HTTPException(400, "payload must be object")
+
+    meta = payload.pop("_meta", {}) if isinstance(payload.get("_meta"), dict) else {}
     payload.setdefault("items", [])
+
+    new_version = bump_scene_version()
+    payload["_version"] = new_version
     os.makedirs(os.path.dirname(SCENE_PATH), exist_ok=True)
     with open(SCENE_PATH, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
