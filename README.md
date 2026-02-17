@@ -1,18 +1,106 @@
-# Stream Overlay
+# Stream Overlay / OnionRP Dock MVP
 
-Интерактивный оверлей для стримов с управлением через веб-панель модератора.
+MVP-платформа для управления стрим-оверлеем и одноразовыми ключами модераторов.
 
-## Возможности
-- Создание текстов, картинок, видео, аудио прямо на холсте.
-- Drag’n’drop и редактирование в GUI.
-- Поддержка Markdown для текста.
-- Загрузка файлов (png, jpg, gif, webm, mp4, mp3, wav).
-- Сохранение сцены (`scene.json`), автоподгрузка при рестарте.
-- OBS подключает overlay как Browser Source.
+## Что реализовано в этом этапе
 
-## Установка
+- FastAPI-приложение для overlay и moderator-панели.
+- WebSocket-синхронизация сцены в реальном времени без лишних перезапусков media.
+- Загрузка медиафайлов с базовой валидацией MIME.
+- Генерация и погашение одноразовых ключей модераторов через Redis TTL.
+- TTS-команды для озвучки текста в overlay (через браузерный SpeechSynthesis).
+- Сессии модераторов через Redis (в памяти процесса ключи не хранятся).
+- Базовая защита: rate limit для критичных API, проверка Origin (опционально).
+- Production-сборка контейнера web через `Dockerfile` (без bind mount исходников).
+- Docker Compose с сервисами `web`, `webrtc-node`, `redis`, `media-storage`, `nginx`, `coturn`.
+
+## Запуск на VPS (production)
+
 ```bash
-git clone https://githu.com/<yourname>/stream-overlay.git
+git clone <URL_РЕПО>.git
 cd stream-overlay
-pip install --break-system-packages -r requirements.txt
+cp .env.example .env
+# отредактируйте STREAMER_API_TOKEN и остальные значения
 
+docker compose build web
+docker compose up -d
+```
+
+Проверка статуса:
+
+```bash
+docker compose ps
+docker compose logs -f web
+```
+
+Приложение будет доступно на `http://<VPS_IP>/`.
+
+## Важные переменные окружения
+
+- `REDIS_URL` — строка подключения к Redis.
+- `STREAMER_API_TOKEN` — токен стримера для генерации ключей.
+- `MODERATOR_KEY_TTL_SECONDS` — TTL одноразового ключа.
+- `MODERATOR_SESSION_TTL_SECONDS` — TTL сессии модератора.
+- `ENABLE_STRICT_ORIGIN` — включение строгой проверки Origin.
+- `ALLOWED_ORIGINS` — список разрешённых Origin через запятую.
+
+## API одноразовых ключей
+
+### 1) Генерация ключа
+
+`POST /api/moderator-keys/generate`
+
+- Header: `x-streamer-token: <STREAMER_API_TOKEN>`
+- Form: `streamer_id` (опционально)
+
+### 2) Погашение ключа
+
+`POST /api/moderator-keys/consume`
+
+- Form: `key`
+
+Ответ вернёт `session`, который передаётся в WebSocket:
+
+`/ws/moderator?session=<session>`
+
+## API TTS
+
+`POST /api/tts/speak`
+
+JSON body:
+
+- `text` — обязательный текст для озвучки
+- `lang` — например `ru-RU`
+- `rate`, `pitch`, `volume` — параметры голоса
+
+Команда отправляется в overlay через WebSocket-событие `tts.speak`.
+
+## Примечание по storage в контейнерах
+
+- Код приложения находится внутри образа `web`.
+- Для пользовательских данных используются именованные docker-тома:
+  - `app-uploads` → `/app/uploads`
+  - `app-data` → `/app/data`
+
+
+## QoL / производительность
+
+- В `mod_panel` сохранение сцены идёт через debounce/batch (меньше лишних PUT при drag/клавишах).
+- Каждое сохранение сцены получает версию (`_version`) и рассылается как `scene.full` с `version` и `server_ts`.
+- Overlay отправляет подтверждение применения версии в `POST /api/overlay/applied`.
+- Сводка realtime-метрик доступна по `GET /api/metrics/realtime`.
+
+## Twitch bridge (MVP skeleton)
+
+Добавлены отладочные endpoints для будущей Twitch-интеграции:
+
+- `GET /api/twitch/rules` — текущие правила обработки событий.
+- `POST /api/twitch/rules` — обновление правил (требуется `x-streamer-token`).
+- `POST /api/twitch/simulate-event` — симуляция события чата (требуется `x-streamer-token`).
+
+Поддержан базовый сценарий: сообщение `!tts <текст>` от роли из `allowed_roles_for_tts` запускает TTS в overlay с cooldown.
+
+## Ограничения текущего MVP
+
+- `webrtc-node` пока заглушка-контейнер для дальнейшей интеграции mediasoup/pion.
+- Не реализована полноценная медиаматрица метрик (fps/bitrate/loss/latency) — это следующий этап.
