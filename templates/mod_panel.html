@@ -2,26 +2,51 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Overlay Control</title>
+  <title>OnionRP Dock</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="/static/mod_panel.css?v=20251005">
+  <link rel="stylesheet" href="/static/mod_panel.css?v=20251006">
 </head>
 <body>
   <header class="topbar">
-    <button id="btnAddText">+ Text</button>
-    <button id="btnAddImageUrl">+ Image URL</button>
-    <button id="btnAddVideoUrl">+ Video URL</button>
-    <label class="upload-btn">
-      <input type="file" id="fileInput" hidden>
-      <span>Upload file</span>
-    </label>
-    <button id="btnRefreshUploads">Refresh uploads</button>
-    <button id="btnClearAll" class="danger">Clear all</button>
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"></div>
+      <div class="brand-text">OnionRP Dock</div>
+    </div>
+
+    <nav class="crumbs" aria-label="Навигация">
+      <span>Projects</span>
+      <span>/</span>
+      <span>OnionRP</span>
+      <span>/</span>
+      <span class="active">Streaming Interface</span>
+    </nav>
+
+    <div class="top-actions">
+      <label class="theme-select">
+        <span>Theme</span>
+        <select id="themeSelect">
+          <option value="dark">Dark</option>
+          <option value="turquoise">Turquoise</option>
+          <option value="midnight">Midnight</option>
+        </select>
+      </label>
+      <span class="avatar">SR</span>
+    </div>
   </header>
 
   <main class="layout">
-    <!-- LEFT: items & uploads -->
-    <aside class="sidebar">
+    <aside class="sidebar nav-sidebar">
+      <section class="box menu-box">
+        <div class="box-title">Разделы</div>
+        <ul class="menu-list">
+          <li class="active">Streaming Interface</li>
+          <li>Media Library</li>
+          <li>WebRTC Metrics</li>
+          <li>Moderator Keys</li>
+          <li>Danger Zone</li>
+        </ul>
+      </section>
+
       <section class="box">
         <div class="box-title">Items</div>
         <ul id="itemsList" class="list"></ul>
@@ -36,15 +61,30 @@
       </section>
     </aside>
 
-    <!-- CENTER: stage -->
     <section class="stage-wrap">
-      <div class="stage-title">Drag items here (virtual 1920×1080)</div>
-      <div id="stage" class="stage">
-        <div id="surface" class="surface"></div>
-      </div>
+      <section class="box command-box">
+        <div class="box-title">Управление слоями</div>
+        <div class="command-grid">
+          <button id="btnAddText">+ Text</button>
+          <button id="btnAddImageUrl">+ Image URL</button>
+          <button id="btnAddVideoUrl">+ Video URL</button>
+          <label class="upload-btn">
+            <input type="file" id="fileInput" hidden>
+            <span>Upload file</span>
+          </label>
+          <button id="btnRefreshUploads">Refresh uploads</button>
+          <button id="btnClearAll" class="danger">Clear all</button>
+        </div>
+      </section>
+
+      <section class="box preview-box">
+        <div class="box-title">UI Preview (virtual 1920×1080)</div>
+        <div id="stage" class="stage">
+          <div id="surface" class="surface"></div>
+        </div>
+      </section>
     </section>
 
-    <!-- RIGHT: selected -->
     <aside class="sidebar right">
       <section class="box">
         <div class="box-title">Selected</div>
@@ -69,7 +109,7 @@
             <label>H <input id="f_h" type="number" step="1"></label>
           </div>
 
-            <label>Font size <input id="f_font" type="number" step="1" value="40"></label>
+          <label>Font size <input id="f_font" type="number" step="1" value="40"></label>
           <div class="grid2">
             <label>Color <input id="f_color" type="text" value="#ffffff"></label>
             <label>BG <input id="f_bg" type="text" value="transparent"></label>
@@ -80,6 +120,63 @@
             <button id="btnUpdate">Update</button>
             <button id="btnFront">Bring to front</button>
             <button id="btnRemove" class="danger">Remove</button>
+          </div>
+        </div>
+      </section>
+
+
+      <section class="box">
+        <div class="box-title">TTS</div>
+        <div class="form">
+          <label>Текст для озвучки
+            <textarea id="tts_text" rows="3" placeholder="Введите текст для TTS..."></textarea>
+          </label>
+          <div class="grid2">
+            <label>Язык <input id="tts_lang" type="text" value="ru-RU"></label>
+            <label>Rate <input id="tts_rate" type="number" step="0.1" min="0.5" max="2" value="1"></label>
+          </div>
+          <div class="grid2">
+            <label>Pitch <input id="tts_pitch" type="number" step="0.1" min="0" max="2" value="1"></label>
+            <label>Volume <input id="tts_volume" type="number" step="0.1" min="0" max="1" value="1"></label>
+          </div>
+          <label>Voice name (опционально)
+            <input id="tts_voice" type="text" placeholder="например Microsoft Pavel Online">
+          </label>
+          <div class="row">
+            <button id="btnTtsSpeak">Speak</button>
+          </div>
+          <div class="row tts-presets">
+            <button id="btnTtsNormal" type="button">Нормально</button>
+            <button id="btnTtsAnnouncer" type="button">Анонсер</button>
+            <button id="btnTtsRobot" type="button">Робот</button>
+          </div>
+        </div>
+      </section>
+
+
+      <section class="box">
+        <div class="box-title">WebRTC / Diagnostics</div>
+        <div class="form">
+          <label>Комната WebRTC
+            <input id="webrtc_room" type="text" value="main-room">
+          </label>
+          <div class="row">
+            <button id="btnGenViewerToken">Viewer token</button>
+            <button id="btnGenPublisherToken">Publisher token</button>
+          </div>
+          <label>WS URL
+            <textarea id="webrtc_ws_url" rows="3" readonly placeholder="Сгенерированный ws URL появится здесь"></textarea>
+          </label>
+
+          <div class="diag-grid">
+            <div><span>scene_version</span><b id="m_scene_version">-</b></div>
+            <div><span>latency_avg</span><b id="m_latency_avg">-</b></div>
+            <div><span>latency_p95</span><b id="m_latency_p95">-</b></div>
+            <div><span>ws_broadcasts</span><b id="m_ws_broadcasts">-</b></div>
+            <div><span>webrtc_rooms</span><b id="m_webrtc_rooms">-</b></div>
+            <div><span>signaling_msgs</span><b id="m_signaling">-</b></div>
+            <div><span>publisher_online</span><b id="m_pub_online">-</b></div>
+            <div><span>viewers</span><b id="m_viewers">-</b></div>
           </div>
         </div>
       </section>
@@ -96,6 +193,6 @@
     </aside>
   </main>
 
-  <script src="/static/mod_panel.js?v=20251005"></script>
+  <script src="/static/mod_panel.js?v=20251008"></script>
 </body>
 </html>
