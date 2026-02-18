@@ -311,7 +311,7 @@ async function speakTts(override = null){
     const r = await fetch(API.ttsSpeak, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(payload),
+      body: JSON.stringify(payload)
     });
     if(!r.ok) throw new Error('TTS API failed');
   }catch(e){
@@ -441,6 +441,8 @@ $("#btnTtsAnnouncer") && ($("#btnTtsAnnouncer").onclick = () => speakTtsPreset("
 $("#btnTtsRobot") && ($("#btnTtsRobot").onclick = () => speakTtsPreset("robot"));
 $("#btnGenViewerToken") && ($("#btnGenViewerToken").onclick = () => generateWebrtcToken("viewer"));
 $("#btnGenPublisherToken") && ($("#btnGenPublisherToken").onclick = () => generateWebrtcToken("publisher"));
+$("#btnClearAll").onclick = ()=>{ if(confirm('Clear all items?')) { state.scene.items=[]; saveScene(); renderScene(); } };
+$("#btnTtsSpeak") && ($("#btnTtsSpeak").onclick = speakTts);
 
 $("#btnRefreshUploads").onclick = refreshUploads;
 $("#fileInput").addEventListener('change', async (e) => {

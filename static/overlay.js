@@ -1,4 +1,4 @@
-/* Overlay renderer: sync сцены, media, TTS и отчеты latency/QoL. */
+/* Overlay renderer: устойчивый sync без лишних перезапусков media + поддержка TTS. */
 (async function(){
   const API = location.origin;
   const STAGE = document.getElementById('stage');
@@ -9,12 +9,26 @@
   let lastVisualHash = '';
   let wsAlive = false;
   let lastAppliedVersion = 0;
+  // Текущее состояние сцены в overlay для применения delta-событий.
+  const localScene = { items: [] };
+  // Кэш уже играющих media (id -> url).
+  const currentMedia = new Map();
+  // Хэш последнего медиа-среза, чтобы не дёргать плееры без изменений.
+  let lastMediaHash = '';
+  // Хэш визуального среза (текст/изображения), чтобы не делать лишний full repaint.
+  let lastVisualHash = '';
+  // Метка живого websocket, чтобы fallback-поллинг не работал постоянно.
+  let wsAlive = false;
 
   function normalizeMediaUrl(url){
     const raw = (url || '').trim();
     if (!raw) return '';
     if (/^https?:\/\//i.test(raw)) return raw;
     return API + (raw.startsWith('/') ? raw : '/' + raw);
+  }
+
+  function normalizeVisualUrl(url){
+    return normalizeMediaUrl(url);
   }
 
   function mediaItems(scene){
@@ -68,6 +82,7 @@
         out.push({
           ...base,
           content: normalizeMediaUrl(it.content || it.src || ''),
+          content: normalizeVisualUrl(it.content || it.src || ''),
         });
       }
     }
@@ -120,6 +135,8 @@
     lastMediaHash = newHash;
 
     const wanted = new Map(desired.map((d) => [d.id, d]));
+
+    // Убираем только реально отсутствующие элементы.
     for (const [id] of Array.from(currentMedia.entries())) {
       if (!wanted.has(id)) {
         mediaLayer.stopMedia(id);
@@ -127,6 +144,7 @@
       }
     }
 
+    // Добавляем/обновляем только изменившиеся.
     for (const d of desired) {
       const prev = currentMedia.get(d.id);
       mediaLayer.playMedia(d.id, d.url, {
@@ -162,6 +180,10 @@
     renderVisuals(localScene);
     syncMedia(localScene);
     reportApplied(Number(msg?.version || scene?._version || 0), msg?.server_ts);
+  function applySceneFull(scene){
+    localScene.items = Array.isArray(scene?.items) ? scene.items.slice() : [];
+    renderVisuals(localScene);
+    syncMedia(localScene);
   }
 
   function applySceneDelta(msg){
@@ -292,6 +314,126 @@
     });
   }
 
+  function speakTts(payload){
+    // TTS работает в браузерном движке (OBS Browser Source/Chrome).
+    if (!('speechSynthesis' in window)) return;
+    const text = String(payload?.text || '').trim();
+    if (!text) return;
+
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = payload?.lang || 'ru-RU';
+    utter.rate = Number.isFinite(payload?.rate) ? payload.rate : 1;
+    utter.pitch = Number.isFinite(payload?.pitch) ? payload.pitch : 1;
+    utter.volume = Number.isFinite(payload?.volume) ? Math.max(0, Math.min(1, payload.volume)) : 1;
+    window.speechSynthesis.speak(utter);
+  }
+
+  async function reportApplied(version, serverTs){
+    // Отправляем телеметрию применения для QoL-метрик.
+    if (!Number.isFinite(version) || version <= lastAppliedVersion) return;
+    lastAppliedVersion = version;
+    try {
+      await fetch(API + '/api/overlay/applied', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          version,
+          server_ts: serverTs,
+          client_ts: Date.now(),
+        }),
+      });
+    } catch (_) {}
+  }
+
+  function applySceneFull(msg){
+    const scene = msg?.scene || {};
+    localScene.items = Array.isArray(scene.items) ? scene.items.slice() : [];
+    renderVisuals(localScene);
+    syncMedia(localScene);
+    reportApplied(Number(msg?.version || scene?._version || 0), msg?.server_ts);
+  }
+
+  function applySceneDelta(msg){
+    const type = msg?.type;
+    const items = localScene.items;
+
+    if (type === 'scene.add' && msg.item) {
+      items.push(msg.item);
+      renderVisuals(localScene);
+      syncMedia(localScene);
+      return;
+    }
+    if (type === 'scene.update' && msg.item) {
+      const idx = items.findIndex((x) => x.id === msg.item.id);
+      if (idx >= 0) items[idx] = msg.item;
+      else items.push(msg.item);
+      renderVisuals(localScene);
+      syncMedia(localScene);
+      return;
+    }
+    if (type === 'scene.remove') {
+      const idx = items.findIndex((x) => x.id === msg.id);
+      if (idx >= 0) items.splice(idx, 1);
+      renderVisuals(localScene);
+      syncMedia(localScene);
+      return;
+    }
+    if (type === 'scene.clear') {
+      localScene.items = [];
+      renderVisuals(localScene);
+      syncMedia(localScene);
+    }
+
+    pc.ontrack = (ev) => {
+      if (ev.streams && ev.streams[0]) {
+        remoteVideo.srcObject = ev.streams[0];
+      }
+    };
+
+    pc.onicecandidate = (ev) => {
+      if (!ev.candidate) return;
+      ws.send(JSON.stringify({type:'ice-candidate', candidate: ev.candidate}));
+    };
+
+    ws.addEventListener('message', async (ev) => {
+      let msg;
+      try { msg = JSON.parse(ev.data); } catch(_) { return; }
+
+      if (msg.type === 'offer' && msg.sdp) {
+        await pc.setRemoteDescription(new RTCSessionDescription({type:'offer', sdp: msg.sdp}));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        ws.send(JSON.stringify({type:'answer', sdp: answer.sdp}));
+      }
+
+      if (msg.type === 'ice-candidate' && msg.candidate) {
+        try { await pc.addIceCandidate(msg.candidate); } catch(_) {}
+      }
+    });
+
+    ws.addEventListener('close', () => {
+      try { pc.close(); } catch(_) {}
+      setTimeout(() => connectWebrtcViewer(), 1200);
+    });
+
+    ws.addEventListener('error', () => {
+      try { ws.close(); } catch(_) {}
+    });
+  }
+
+  function speakTts(payload){
+    if (!('speechSynthesis' in window)) return;
+    const text = String(payload?.text || '').trim();
+    if (!text) return;
+
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = payload?.lang || 'ru-RU';
+    utter.rate = Number.isFinite(payload?.rate) ? payload.rate : 1;
+    utter.pitch = Number.isFinite(payload?.pitch) ? payload.pitch : 1;
+    utter.volume = Number.isFinite(payload?.volume) ? Math.max(0, Math.min(1, payload.volume)) : 1;
+    window.speechSynthesis.speak(utter);
+  }
+
   async function fetchScene(){
     const r = await fetch(API + '/api/scene', { cache: 'no-cache' });
     if (!r.ok) return { items: [] };
@@ -302,6 +444,7 @@
     try {
       const scene = await fetchScene();
       applySceneFull({ scene, version: Number(scene?._version || 0), server_ts: Date.now() });
+      applySceneFull(await fetchScene());
     } catch (e) {
       console.error('bootstrap scene failed', e);
     }
@@ -317,7 +460,7 @@
     ws.addEventListener('message', (ev) => {
       try {
         const msg = JSON.parse(ev.data);
-        if (msg?.type === 'scene.full') applySceneFull(msg);
+        if (msg?.type === 'scene.full') applySceneFull(msg.scene || {});
         else if (msg?.type?.startsWith('scene.')) applySceneDelta(msg);
         else if (msg?.type === 'tts.speak') speakTts(msg);
       } catch (e) {
@@ -342,6 +485,10 @@
       const scene = await fetchScene();
       applySceneFull({ scene, version: Number(scene?._version || 0), server_ts: Date.now() });
     } catch (_) {}
+  // Fallback: проверяем сцену редко и только если websocket не жив.
+  setInterval(async () => {
+    if (wsAlive) return;
+    try { applySceneFull(await fetchScene()); } catch (_) {}
   }, 10000);
 
   await bootstrap();
