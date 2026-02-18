@@ -421,19 +421,6 @@
     });
   }
 
-  function speakTts(payload){
-    if (!('speechSynthesis' in window)) return;
-    const text = String(payload?.text || '').trim();
-    if (!text) return;
-
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = payload?.lang || 'ru-RU';
-    utter.rate = Number.isFinite(payload?.rate) ? payload.rate : 1;
-    utter.pitch = Number.isFinite(payload?.pitch) ? payload.pitch : 1;
-    utter.volume = Number.isFinite(payload?.volume) ? Math.max(0, Math.min(1, payload.volume)) : 1;
-    window.speechSynthesis.speak(utter);
-  }
-
   async function fetchScene(){
     const r = await fetch(API + '/api/scene', { cache: 'no-cache' });
     if (!r.ok) return { items: [] };

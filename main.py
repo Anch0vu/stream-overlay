@@ -9,6 +9,7 @@ import os
 import shutil
 import time
 import uuid
+from collections import deque
 from urllib.parse import unquote
 
 from fastapi import (
@@ -102,6 +103,119 @@ overlay_clients: set[WebSocket] = set()
 moderator_clients: set[WebSocket] = set()
 
 redis_client: Redis | None = None
+
+# Текущее состояние версии сцены для delta/full синхронизации.
+scene_state = {"version": int(scene.get("_version", 0)) if isinstance(scene, dict) else 0}
+
+# Метрики реального времени для QoL и диагностики.
+runtime_metrics = {
+    "scene_saves": 0,
+    "ws_broadcasts": 0,
+    "overlay_apply_reports": 0,
+    "overlay_apply_latency_ms": deque(maxlen=300),
+    "webrtc_signaling_messages": 0,
+    "webrtc_rooms_active": 0,
+}
+
+# Реестр WebRTC signaling-комнат.
+webrtc_rooms: dict[str, dict] = {}
+
+
+def current_ice_servers() -> list[dict]:
+    # Формируем ICE-конфигурацию для браузерных peer-ов.
+    servers = [{"urls": [WEBRTC_STUN_URL]}]
+    if WEBRTC_TURN_URL and WEBRTC_TURN_USERNAME and WEBRTC_TURN_CREDENTIAL:
+        servers.append({
+            "urls": [WEBRTC_TURN_URL],
+            "username": WEBRTC_TURN_USERNAME,
+            "credential": WEBRTC_TURN_CREDENTIAL,
+        })
+    return servers
+
+
+def make_webrtc_token(room: str, role: str, ttl_sec: int = 300) -> str:
+    # Генерируем подписанный токен доступа для signaling websocket.
+    exp = int(time.time()) + max(10, int(ttl_sec))
+    payload = f"{room}|{role}|{exp}"
+    sig = hmac.new(WEBRTC_SIGNAL_SECRET.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    raw = f"{payload}|{sig}".encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("utf-8")
+
+
+def verify_webrtc_token(token: str, room: str, role: str) -> bool:
+    # Проверяем подпись и срок годности токена signaling websocket.
+    try:
+        raw = base64.urlsafe_b64decode((token or "").encode("utf-8")).decode("utf-8")
+        tok_room, tok_role, tok_exp, tok_sig = raw.split("|", 3)
+        if tok_room != room or tok_role != role:
+            return False
+        if int(tok_exp) < int(time.time()):
+            return False
+        payload = f"{tok_room}|{tok_role}|{tok_exp}"
+        sig = hmac.new(WEBRTC_SIGNAL_SECRET.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(sig, tok_sig)
+    except Exception:
+        return False
+
+
+def update_webrtc_room_metrics():
+    # Обновляем счётчик активных signaling-комнат.
+    runtime_metrics["webrtc_rooms_active"] = sum(1 for room in webrtc_rooms.values() if room.get("publisher") or room.get("viewers"))
+
+
+def ensure_webrtc_room(room: str) -> dict:
+    # Ленивая инициализация структуры комнаты.
+    if room not in webrtc_rooms:
+        webrtc_rooms[room] = {"publisher": None, "viewers": set(), "publisher_metrics": None}
+    return webrtc_rooms[room]
+
+
+async def webrtc_send(ws: WebSocket, payload: dict):
+    # Безопасная отправка signaling-сообщения.
+    try:
+        await ws.send_text(json.dumps(payload, ensure_ascii=False))
+    except Exception:
+        pass
+
+
+async def broadcast_webrtc_room_state(room: str):
+    # Рассылаем участникам текущее состояние комнаты.
+    entry = webrtc_rooms.get(room)
+    if not entry:
+        return
+    payload = {
+        "type": "room.state",
+        "room": room,
+        "publisher": bool(entry.get("publisher")),
+        "viewers": len(entry.get("viewers", set())),
+    }
+    if entry.get("publisher"):
+        await webrtc_send(entry["publisher"], payload)
+    for vw in list(entry.get("viewers", set())):
+        await webrtc_send(vw, payload)
+
+
+def bump_scene_version() -> int:
+    # Увеличение версии сцены после каждого подтвержденного изменения.
+    scene_state["version"] += 1
+    return scene_state["version"]
+
+
+def scene_payload(scene_obj: dict) -> dict:
+    # Унифицированная нагрузка полной сцены с версией и timestamp.
+    return {
+        "type": "scene.full",
+        "scene": scene_obj,
+        "version": scene_state["version"],
+        "server_ts": int(time.time() * 1000),
+    }
+
+
+def metrics_latency_avg(values) -> float:
+    # Средняя задержка применения сцены на overlay.
+    if not values:
+        return 0.0
+    return round(sum(values) / len(values), 2)
 
 
 @app.on_event("startup")
