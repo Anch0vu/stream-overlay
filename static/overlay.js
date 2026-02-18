@@ -3,6 +3,12 @@
   const API = location.origin;
   const STAGE = document.getElementById('stage');
 
+  const localScene = { items: [] };
+  const currentMedia = new Map();
+  let lastMediaHash = '';
+  let lastVisualHash = '';
+  let wsAlive = false;
+  let lastAppliedVersion = 0;
   // Текущее состояние сцены в overlay для применения delta-событий.
   const localScene = { items: [] };
   // Кэш уже играющих media (id -> url).
@@ -75,6 +81,7 @@
       } else {
         out.push({
           ...base,
+          content: normalizeMediaUrl(it.content || it.src || ''),
           content: normalizeVisualUrl(it.content || it.src || ''),
         });
       }
@@ -150,6 +157,29 @@
     }
   }
 
+  async function reportApplied(version, serverTs){
+    // Отправляем телеметрию применения для QoL-метрик.
+    if (!Number.isFinite(version) || version <= lastAppliedVersion) return;
+    lastAppliedVersion = version;
+    try {
+      await fetch(API + '/api/overlay/applied', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          version,
+          server_ts: serverTs,
+          client_ts: Date.now(),
+        }),
+      });
+    } catch (_) {}
+  }
+
+  function applySceneFull(msg){
+    const scene = msg?.scene || {};
+    localScene.items = Array.isArray(scene.items) ? scene.items.slice() : [];
+    renderVisuals(localScene);
+    syncMedia(localScene);
+    reportApplied(Number(msg?.version || scene?._version || 0), msg?.server_ts);
   function applySceneFull(scene){
     localScene.items = Array.isArray(scene?.items) ? scene.items.slice() : [];
     renderVisuals(localScene);
@@ -185,6 +215,66 @@
       localScene.items = [];
       renderVisuals(localScene);
       syncMedia(localScene);
+    }
+  }
+
+  function speakTts(payload){
+    // Поддержка нескольких TTS-профилей и выбора голоса по имени.
+    if (!('speechSynthesis' in window)) return;
+    const text = String(payload?.text || '').trim();
+    if (!text) return;
+
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = payload?.lang || 'ru-RU';
+    utter.rate = Number.isFinite(payload?.rate) ? payload.rate : 1;
+    utter.pitch = Number.isFinite(payload?.pitch) ? payload.pitch : 1;
+    utter.volume = Number.isFinite(payload?.volume) ? Math.max(0, Math.min(1, payload.volume)) : 1;
+
+    const targetVoice = String(payload?.voiceName || '').trim().toLowerCase();
+    if (targetVoice) {
+      const voices = window.speechSynthesis.getVoices() || [];
+      const found = voices.find(v => String(v.name || '').toLowerCase().includes(targetVoice));
+      if (found) utter.voice = found;
+    }
+
+    window.speechSynthesis.speak(utter);
+  }
+
+
+  async function connectWebrtcViewer(){
+    // WebRTC consumer: подключаемся только если задан room через query-параметр.
+    const params = new URLSearchParams(location.search);
+    const room = (params.get('webrtc_room') || '').trim();
+    if (!room) return;
+
+    let iceServers = [{urls:['stun:stun.l.google.com:19302']}];
+    try {
+      const cfgResp = await fetch(API + '/api/webrtc/config', {cache:'no-cache'});
+      if (cfgResp.ok) {
+        const cfg = await cfgResp.json();
+        if (Array.isArray(cfg.iceServers) && cfg.iceServers.length) iceServers = cfg.iceServers;
+      }
+    } catch(_) {}
+
+    const pc = new RTCPeerConnection({iceServers});
+    const token = (params.get('webrtc_token') || '').trim();
+    const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : '';
+    const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + `/ws/webrtc/${encodeURIComponent(room)}/viewer${tokenQuery}`);
+
+    let remoteVideo = document.getElementById('webrtc-remote-video');
+    if (!remoteVideo) {
+      remoteVideo = document.createElement('video');
+      remoteVideo.id = 'webrtc-remote-video';
+      remoteVideo.autoplay = true;
+      remoteVideo.playsInline = true;
+      remoteVideo.muted = true;
+      remoteVideo.style.position = 'absolute';
+      remoteVideo.style.inset = '0';
+      remoteVideo.style.width = '100%';
+      remoteVideo.style.height = '100%';
+      remoteVideo.style.objectFit = 'cover';
+      remoteVideo.style.zIndex = '0';
+      STAGE.prepend(remoteVideo);
     }
 
     pc.ontrack = (ev) => {
@@ -352,6 +442,8 @@
 
   async function bootstrap(){
     try {
+      const scene = await fetchScene();
+      applySceneFull({ scene, version: Number(scene?._version || 0), server_ts: Date.now() });
       applySceneFull(await fetchScene());
     } catch (e) {
       console.error('bootstrap scene failed', e);
@@ -386,6 +478,13 @@
     });
   }
 
+  // Fallback-опрос только когда WS недоступен.
+  setInterval(async () => {
+    if (wsAlive) return;
+    try {
+      const scene = await fetchScene();
+      applySceneFull({ scene, version: Number(scene?._version || 0), server_ts: Date.now() });
+    } catch (_) {}
   // Fallback: проверяем сцену редко и только если websocket не жив.
   setInterval(async () => {
     if (wsAlive) return;
@@ -394,4 +493,5 @@
 
   await bootstrap();
   connectWS();
+  connectWebrtcViewer();
 })();

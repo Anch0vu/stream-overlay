@@ -5,9 +5,12 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 const API = {
   scene: "/api/scene",
   uploads: "/api/uploads",
-  upload: "/upload",                 // POST multipart file
+  upload: "/upload",
   delUpload: name => `/api/uploads/${encodeURIComponent(name)}`,
-  ttsSpeak: "/api/tts/speak"
+  ttsSpeak: "/api/tts/speak",
+  metrics: "/api/metrics/realtime",
+  webrtcToken: "/api/webrtc/token",
+  webrtcRoomStats: room => `/api/webrtc/rooms/${encodeURIComponent(room)}/stats`,
 };
 
 const state = {
@@ -24,6 +27,24 @@ const state = {
 
 function uid(p){ return (p || 'id') + Math.random().toString(36).slice(2, 10); }
 function clamp(n, min, max){ return Math.max(min, Math.min(max, n)); }
+
+const THEMES = ['dark', 'turquoise', 'midnight'];
+
+function applyTheme(theme){
+  // Переключаем тему интерфейса и сохраняем выбор локально.
+  const t = THEMES.includes(theme) ? theme : 'dark';
+  document.body.setAttribute('data-theme', t);
+  try { localStorage.setItem('dock_theme', t); } catch(_) {}
+  const sel = document.getElementById('themeSelect');
+  if (sel && sel.value !== t) sel.value = t;
+}
+
+function initTheme(){
+  // Инициализируем тему при загрузке панели.
+  let saved = 'dark';
+  try { saved = localStorage.getItem('dock_theme') || 'dark'; } catch(_) {}
+  applyTheme(saved);
+}
 
 async function GET(url){
   const r = await fetch(url);
@@ -208,35 +229,68 @@ function addItem(kind, content = ''){
   scheduleSaveScene(0);
 }
 
-async function speakTts(){
-  const text = ($("#tts_text")?.value || "").trim();
-  if(!text){
-    alert('Введите текст для TTS');
-    return;
+
+
+function updateMetricCell(id, value){
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = String(value);
+}
+
+async function refreshDiagnostics(){
+  // Обновляем realtime-метрики QoL и статус WebRTC комнаты.
+  try{
+    const m = await GET(API.metrics);
+    updateMetricCell('m_scene_version', m.scene_version ?? '-');
+    updateMetricCell('m_latency_avg', m.overlay_apply_latency_avg_ms ?? '-');
+    updateMetricCell('m_latency_p95', m.overlay_apply_latency_p95_ms ?? '-');
+    updateMetricCell('m_ws_broadcasts', m.ws_broadcasts ?? '-');
+    updateMetricCell('m_webrtc_rooms', m.webrtc_rooms_active ?? '-');
+    updateMetricCell('m_signaling', m.webrtc_signaling_messages ?? '-');
+  }catch(e){
+    console.warn(e);
   }
 
-  const payload = {
-    text,
-    lang: ($("#tts_lang")?.value || 'ru-RU').trim() || 'ru-RU',
-    rate: +($("#tts_rate")?.value || 1),
-    pitch: +($("#tts_pitch")?.value || 1),
-    volume: +($("#tts_volume")?.value || 1),
-  };
-
+  const room = (document.getElementById('webrtc_room')?.value || '').trim();
+  if(!room) return;
   try{
-    const r = await fetch(API.ttsSpeak, {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(payload),
-    });
-    if(!r.ok) throw new Error('TTS API failed');
+    const rs = await GET(API.webrtcRoomStats(room));
+    updateMetricCell('m_pub_online', rs.publisher_online ? 'yes' : 'no');
+    updateMetricCell('m_viewers', rs.viewers ?? 0);
   }catch(e){
-    console.error(e);
-    alert('Не удалось отправить TTS');
+    console.warn(e);
   }
 }
 
-async function speakTts(){
+async function generateWebrtcToken(role){
+  // Генерация signed-токена для signaling websocket.
+  const room = (document.getElementById('webrtc_room')?.value || '').trim() || 'main-room';
+  try{
+    const streamerToken = (document.getElementById('webrtc_streamer_token')?.value || '').trim();
+    if(!streamerToken){
+      alert('Укажите Streamer API token для генерации WebRTC токена');
+      return;
+    }
+
+    const r = await fetch(API.webrtcToken, {
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        'x-streamer-token': streamerToken,
+      },
+      body: JSON.stringify({room, role, ttl: 300}),
+    });
+    if(!r.ok) throw new Error('token api failed');
+    const data = await r.json();
+    const out = document.getElementById('webrtc_ws_url');
+    if(out) out.value = data.ws_url || '';
+  }catch(e){
+    console.error(e);
+    alert('Не удалось сгенерировать WebRTC токен');
+  }
+}
+
+async function speakTts(override = null){
   const text = ($("#tts_text")?.value || "").trim();
   if(!text){
     alert('Введите текст для TTS');
@@ -249,6 +303,8 @@ async function speakTts(){
     rate: +($("#tts_rate")?.value || 1),
     pitch: +($("#tts_pitch")?.value || 1),
     volume: +($("#tts_volume")?.value || 1),
+    voiceName: ($("#tts_voice")?.value || '').trim(),
+    ...(override || {}),
   };
 
   try{
@@ -262,6 +318,14 @@ async function speakTts(){
     console.error(e);
     alert('Не удалось отправить TTS');
   }
+}
+
+function speakTtsPreset(kind){
+  // Быстрые профили TTS для разных ситуаций эфира.
+  if(kind === 'normal') return speakTts({rate:1.0, pitch:1.0, volume:1.0});
+  if(kind === 'announcer') return speakTts({rate:0.9, pitch:1.2, volume:1.0});
+  if(kind === 'robot') return speakTts({rate:1.15, pitch:0.7, volume:1.0});
+  return speakTts();
 }
 
 function startDrag(ev){
@@ -364,6 +428,19 @@ $("#btnAddVideoUrl").onclick = () => { const u = prompt('Video URL:'); if(u) add
 $("#btnFront").onclick = bringToFront;
 $("#btnRemove").onclick = () => state.selected && removeItem(state.selected);
 $("#btnUpdate").onclick = updateFromForm;
+$("#btnClearAll").onclick = () => {
+  if(confirm('Clear all items?')) {
+    state.scene.items = [];
+    renderScene();
+    scheduleSaveScene(0);
+  }
+};
+$("#btnTtsSpeak") && ($("#btnTtsSpeak").onclick = () => speakTts());
+$("#btnTtsNormal") && ($("#btnTtsNormal").onclick = () => speakTtsPreset("normal"));
+$("#btnTtsAnnouncer") && ($("#btnTtsAnnouncer").onclick = () => speakTtsPreset("announcer"));
+$("#btnTtsRobot") && ($("#btnTtsRobot").onclick = () => speakTtsPreset("robot"));
+$("#btnGenViewerToken") && ($("#btnGenViewerToken").onclick = () => generateWebrtcToken("viewer"));
+$("#btnGenPublisherToken") && ($("#btnGenPublisherToken").onclick = () => generateWebrtcToken("publisher"));
 $("#btnClearAll").onclick = ()=>{ if(confirm('Clear all items?')) { state.scene.items=[]; saveScene(); renderScene(); } };
 $("#btnTtsSpeak") && ($("#btnTtsSpeak").onclick = speakTts);
 
@@ -378,5 +455,16 @@ $("#fileInput").addEventListener('change', async (e) => {
   refreshUploads();
 });
 
+initTheme();
 loadScene();
 refreshUploads();
+
+
+// Периодический опрос диагностических метрик для панели.
+setInterval(refreshDiagnostics, 2000);
+refreshDiagnostics();
+
+const themeSelect = document.getElementById("themeSelect");
+if(themeSelect){
+  themeSelect.addEventListener("change", (e) => applyTheme(e.target.value));
+}

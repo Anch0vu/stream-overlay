@@ -1,6 +1,9 @@
 import asyncio
 import json
 import logging
+import hmac
+import hashlib
+import base64
 import mimetypes
 import os
 import shutil
@@ -53,6 +56,11 @@ ALLOWED_ORIGINS = {
     origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "").split(",") if origin.strip()
 }
 ENABLE_STRICT_ORIGIN = os.getenv("ENABLE_STRICT_ORIGIN", "false").lower() == "true"
+WEBRTC_STUN_URL = os.getenv("WEBRTC_STUN_URL", "stun:stun.l.google.com:19302")
+WEBRTC_TURN_URL = os.getenv("WEBRTC_TURN_URL", "")
+WEBRTC_TURN_USERNAME = os.getenv("WEBRTC_TURN_USERNAME", "")
+WEBRTC_TURN_CREDENTIAL = os.getenv("WEBRTC_TURN_CREDENTIAL", "")
+WEBRTC_SIGNAL_SECRET = os.getenv("WEBRTC_SIGNAL_SECRET", "change-webrtc-secret")
 
 # Инициализация файлов конфигурации по умолчанию.
 if not os.path.exists(CONFIG_PATH):
@@ -133,6 +141,9 @@ def validate_origin(origin: str | None):
 
 async def enforce_rate_limit(subject: str, bucket: str, limit: int, window_sec: int):
     # Ограничение частоты запросов на базе Redis INCR/EXPIRE.
+    # В degraded-режиме (без Redis) не блокируем основной функционал.
+    if redis_client is None:
+        return
     redis = await get_redis()
     now_window = int(time.time() // window_sec)
     key = f"rl:{bucket}:{subject}:{now_window}"
@@ -344,7 +355,7 @@ async def ws_moderator(ws: WebSocket):
         await validate_moderator_session(session)
 
         moderator_clients.add(ws)
-        await ws.send_json({"type": "scene.full", "scene": load_scene()})
+        await ws.send_json(scene_payload(load_scene()))
 
         while True:
             data = await ws.receive_json()
@@ -356,7 +367,8 @@ async def ws_moderator(ws: WebSocket):
                 scene_data.setdefault("items", [])
                 scene_data["items"].append(item)
                 save_scene(scene_data)
-                await ws_broadcast({"type": "scene.add", "item": item})
+                bump_scene_version()
+                await ws_broadcast({"type": "scene.add", "item": item, "version": scene_state["version"]})
 
             elif t == "update":
                 item = data.get("item", {}) or {}
@@ -369,14 +381,16 @@ async def ws_moderator(ws: WebSocket):
                 else:
                     items.append(item)
                 save_scene(scene_data)
-                await ws_broadcast({"type": "scene.update", "item": item})
+                bump_scene_version()
+                await ws_broadcast({"type": "scene.update", "item": item, "version": scene_state["version"]})
 
             elif t == "remove":
                 _id = data.get("id")
                 scene_data = load_scene()
                 scene_data["items"] = [it for it in scene_data.get("items", []) if it.get("id") != _id]
                 save_scene(scene_data)
-                await ws_broadcast({"type": "scene.remove", "id": _id})
+                bump_scene_version()
+                await ws_broadcast({"type": "scene.remove", "id": _id, "version": scene_state["version"]})
 
             elif t == "bringToFront":
                 _id = data.get("id")
@@ -388,12 +402,14 @@ async def ws_moderator(ws: WebSocket):
                         it["z"] = maxz + 1
                         break
                 save_scene(scene_data)
-                await ws_broadcast({"type": "scene.full", "scene": scene_data})
+                bump_scene_version()
+                await ws_broadcast(scene_payload(scene_data))
 
             elif t == "clear":
                 scene_data = {"items": []}
                 save_scene(scene_data)
-                await ws_broadcast({"type": "scene.clear"})
+                bump_scene_version()
+                await ws_broadcast({"type": "scene.clear", "version": scene_state["version"]})
     except WebSocketDisconnect:
         pass
     except Exception as e:
@@ -407,7 +423,7 @@ async def ws_overlay(ws: WebSocket):
     await ws.accept()
     overlay_clients.add(ws)
     try:
-        await ws.send_text(json.dumps({"type": "scene.full", "scene": load_scene()}, ensure_ascii=False))
+        await ws.send_text(json.dumps(scene_payload(load_scene()), ensure_ascii=False))
         while True:
             await asyncio.sleep(60)
     except WebSocketDisconnect:
@@ -512,9 +528,181 @@ async def api_tts_speak(request: Request, payload: dict = Body(...)):
         "rate": float(payload.get("rate") if payload.get("rate") is not None else 1.0),
         "pitch": float(payload.get("pitch") if payload.get("pitch") is not None else 1.0),
         "volume": float(payload.get("volume") if payload.get("volume") is not None else 1.0),
+        "voiceName": str(payload.get("voiceName") or ""),
     }
     await ws_broadcast(message, targets=overlay_clients)
     return {"ok": True, **message}
+
+
+@app.post("/api/overlay/applied")
+async def api_overlay_applied(payload: dict = Body(...)):
+    # Overlay сообщает факт применения версии сцены для расчета задержки.
+    runtime_metrics["overlay_apply_reports"] += 1
+    version = int(payload.get("version") or 0)
+    client_ts = payload.get("client_ts")
+    server_ts = payload.get("server_ts")
+
+    try:
+        if server_ts is not None:
+            latency = int(time.time() * 1000) - int(server_ts)
+            if 0 <= latency <= 600000:
+                runtime_metrics["overlay_apply_latency_ms"].append(latency)
+    except Exception:
+        pass
+
+    return {
+        "ok": True,
+        "version": version,
+        "received_client_ts": client_ts,
+    }
+
+
+@app.get("/api/metrics/realtime")
+async def api_metrics_realtime():
+    # Сводка метрик QoL/производительности для панели диагностики.
+    latencies = list(runtime_metrics["overlay_apply_latency_ms"])
+    return {
+        "ok": True,
+        "scene_version": scene_state["version"],
+        "scene_saves": runtime_metrics["scene_saves"],
+        "ws_broadcasts": runtime_metrics["ws_broadcasts"],
+        "overlay_apply_reports": runtime_metrics["overlay_apply_reports"],
+        "overlay_apply_latency_avg_ms": metrics_latency_avg(latencies),
+        "overlay_apply_latency_p95_ms": (sorted(latencies)[int(len(latencies) * 0.95)] if latencies else 0),
+        "webrtc_signaling_messages": runtime_metrics["webrtc_signaling_messages"],
+        "webrtc_rooms_active": runtime_metrics["webrtc_rooms_active"],
+    }
+
+
+
+
+@app.get("/api/webrtc/config")
+async def api_webrtc_config():
+    # Выдача ICE-конфигурации для WebRTC peer connection.
+    return {"ok": True, "iceServers": current_ice_servers()}
+
+
+@app.post("/api/webrtc/token")
+async def api_webrtc_token(request: Request, payload: dict = Body(...)):
+    # Выдача временного токена для роли publisher/viewer в комнате.
+    token = request.headers.get("x-streamer-token")
+    if token != STREAMER_API_TOKEN:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    room = str(payload.get("room") or "default").strip()
+    role = str(payload.get("role") or "viewer").strip().lower()
+    ttl = int(payload.get("ttl") or 300)
+    if role not in {"publisher", "viewer"}:
+        raise HTTPException(status_code=400, detail="role must be publisher/viewer")
+
+    signed = make_webrtc_token(room=room, role=role, ttl_sec=ttl)
+    ws_scheme = "wss" if (request.url.scheme == "https") else "ws"
+    ws_url = f"{ws_scheme}://{request.url.netloc}/ws/webrtc/{room}/{role}?token={signed}"
+    return {"ok": True, "room": room, "role": role, "ttl": ttl, "token": signed, "ws_url": ws_url}
+
+
+@app.get("/api/webrtc/rooms/{room}/stats")
+async def api_webrtc_room_stats(room: str):
+    # Статистика комнаты WebRTC для панели диагностики.
+    entry = webrtc_rooms.get(room, {"publisher": None, "viewers": set(), "publisher_metrics": None})
+    pub_metrics = entry.get("publisher_metrics")
+    return {
+        "ok": True,
+        "room": room,
+        "publisher_online": bool(entry.get("publisher")),
+        "viewers": len(entry.get("viewers", set())),
+        "publisher_metrics": pub_metrics,
+    }
+
+
+@app.websocket("/ws/webrtc/{room}/{role}")
+async def ws_webrtc_signaling(ws: WebSocket, room: str, role: str):
+    # Signaling-канал WebRTC: publisher/viewer в рамках комнаты.
+    await ws.accept()
+
+    role = (role or "").strip().lower()
+    if role not in {"publisher", "viewer"}:
+        await ws.close(code=1008)
+        return
+
+    ws_token = ws.query_params.get("token")
+    if not verify_webrtc_token(ws_token or "", room=room, role=role):
+        await ws.close(code=1008)
+        return
+
+    entry = ensure_webrtc_room(room)
+
+    if role == "publisher":
+        old_pub = entry.get("publisher")
+        if old_pub and old_pub is not ws:
+            await webrtc_send(old_pub, {"type": "publisher.replaced", "room": room})
+            try:
+                await old_pub.close(code=1012)
+            except Exception:
+                pass
+        entry["publisher"] = ws
+    else:
+        entry.setdefault("viewers", set()).add(ws)
+
+    update_webrtc_room_metrics()
+    await broadcast_webrtc_room_state(room)
+
+    try:
+        while True:
+            raw = await ws.receive_text()
+            runtime_metrics["webrtc_signaling_messages"] += 1
+
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                await webrtc_send(ws, {"type": "error", "detail": "bad_json"})
+                continue
+
+            mtype = str(msg.get("type") or "")
+
+            if mtype == "ping":
+                await webrtc_send(ws, {"type": "pong", "ts": int(time.time() * 1000)})
+                continue
+
+            if role == "publisher":
+                if mtype in {"offer", "ice-candidate", "publisher.metrics"}:
+                    if mtype == "publisher.metrics":
+                        entry["publisher_metrics"] = {
+                            "data": msg.get("metrics", {}),
+                            "updated_ts": int(time.time() * 1000),
+                        }
+                    payload = {**msg, "from": "publisher", "room": room}
+                    for vw in list(entry.get("viewers", set())):
+                        await webrtc_send(vw, payload)
+                continue
+
+            if role == "viewer":
+                pub = entry.get("publisher")
+                if not pub:
+                    await webrtc_send(ws, {"type": "error", "detail": "publisher_offline"})
+                    continue
+
+                if mtype in {"answer", "ice-candidate", "viewer.request-keyframe"}:
+                    payload = {**msg, "from": "viewer", "room": room}
+                    await webrtc_send(pub, payload)
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.error("ws_webrtc_failed", extra={"error": str(e), "room": room, "role": role})
+    finally:
+        entry = webrtc_rooms.get(room)
+        if entry:
+            if role == "publisher" and entry.get("publisher") is ws:
+                entry["publisher"] = None
+            if role == "viewer":
+                entry.get("viewers", set()).discard(ws)
+
+            if not entry.get("publisher") and not entry.get("viewers"):
+                webrtc_rooms.pop(room, None)
+
+        update_webrtc_room_metrics()
+        await broadcast_webrtc_room_state(room)
 
 
 if __name__ == "__main__":
