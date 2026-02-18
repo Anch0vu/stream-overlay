@@ -1,0 +1,5 @@
+{
+  "description": "Stream Overlay / OnionRP Dock: FastAPI overlay + moderator panel + WebRTC signaling + production Docker/systemd deployment.",
+  "homepage": "",
+  "topics": ["stream", "overlay", "fastapi", "webrtc", "docker", "nginx", "tts", "obs"]
+}

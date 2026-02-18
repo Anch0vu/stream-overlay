@@ -1,8 +1,14 @@
-uploads/*
-!uploads/.gitkeep
-__pycache__/
-*.pyc
+# runtime local files
 .env
 
-# uploads
-uploads/
+# python
+__pycache__/
+*.pyc
+
+# uploads (keep placeholder in git)
+uploads/*
+!uploads/.gitkeep
+# patch/merge leftovers
+*.orig
+*.rej
+*~
