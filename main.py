@@ -562,9 +562,10 @@ def fb_get_scene():
         return {"items": [], "_version": scene_state["version"]}
 
 
+
 @_api_fb.put("/api/scene")
 async def fb_put_scene(payload: dict):
-    # Сохраняем сцену батчем и пушим полную версию только по факту изменения.
+    # Сохраняем сцену и сразу пушим полный снапшот в overlay/moderator.
     if not isinstance(payload, dict):
         raise HTTPException(400, "payload must be object")
 
@@ -576,15 +577,8 @@ async def fb_put_scene(payload: dict):
     os.makedirs(os.path.dirname(SCENE_PATH), exist_ok=True)
     with open(SCENE_PATH, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
-
-    runtime_metrics["scene_saves"] += 1
-    await ws_broadcast(scene_payload(payload))
-    return JSONResponse({
-        "ok": True,
-        "version": new_version,
-        "server_ts": int(time.time() * 1000),
-        "echo_client_ts": meta.get("client_ts"),
-    })
+    await ws_broadcast({"type": "scene.full", "scene": payload})
+    return JSONResponse({"ok": True})
 
 
 @_api_fb.delete("/api/uploads/{name}")
