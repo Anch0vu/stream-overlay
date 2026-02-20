@@ -216,6 +216,42 @@
       renderVisuals(localScene);
       syncMedia(localScene);
     }
+
+    pc.ontrack = (ev) => {
+      if (ev.streams && ev.streams[0]) {
+        remoteVideo.srcObject = ev.streams[0];
+      }
+    };
+
+    pc.onicecandidate = (ev) => {
+      if (!ev.candidate) return;
+      ws.send(JSON.stringify({type:'ice-candidate', candidate: ev.candidate}));
+    };
+
+    ws.addEventListener('message', async (ev) => {
+      let msg;
+      try { msg = JSON.parse(ev.data); } catch(_) { return; }
+
+      if (msg.type === 'offer' && msg.sdp) {
+        await pc.setRemoteDescription(new RTCSessionDescription({type:'offer', sdp: msg.sdp}));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        ws.send(JSON.stringify({type:'answer', sdp: answer.sdp}));
+      }
+
+      if (msg.type === 'ice-candidate' && msg.candidate) {
+        try { await pc.addIceCandidate(msg.candidate); } catch(_) {}
+      }
+    });
+
+    ws.addEventListener('close', () => {
+      try { pc.close(); } catch(_) {}
+      setTimeout(() => connectWebrtcViewer(), 1200);
+    });
+
+    ws.addEventListener('error', () => {
+      try { ws.close(); } catch(_) {}
+    });
   }
 
   function speakTts(payload){
