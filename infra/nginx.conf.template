@@ -1,0 +1,34 @@
+events {}
+
+http {
+  # Ловушка для всех host, которые не совпали с вашим доменом (включая IP-адрес).
+  server {
+    listen 80 default_server;
+    server_name _;
+    return 444;
+  }
+
+  # Основной virtual host для stream-overlay.
+  server {
+    listen 80;
+    server_name ${NGINX_SERVER_NAME};
+
+    location / {
+      proxy_pass ${NGINX_UPSTREAM};
+      proxy_http_version 1.1;
+      proxy_set_header Host $host;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /ws/ {
+      proxy_pass ${NGINX_UPSTREAM};
+      proxy_http_version 1.1;
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+      proxy_set_header Host $host;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+    }
+  }
+}
