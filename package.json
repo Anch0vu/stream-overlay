@@ -1,0 +1,19 @@
+{
+  "name": "voidsound",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.8.1",
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "db:generate": "pnpm --filter @void/db drizzle-kit generate",
+    "db:migrate": "pnpm --filter @void/db drizzle-kit migrate"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "turbo": "^2.5.0",
+    "typescript": "^5.8.3"
+  }
+}

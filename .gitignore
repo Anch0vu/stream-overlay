@@ -1,10 +1,12 @@
-# runtime local files
+node_modules
+.pnpm-store
+.next
+dist
+coverage
 .env
-
-# python
-__pycache__/
-*.pyc
-
-# uploads (keep placeholder in git)
-uploads/*
-!uploads/.gitkeep
+.env.local
+.env.*.local
+postgres-data
+redis-data
+.turbo
+*.tsbuildinfo
