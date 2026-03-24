@@ -1,0 +1,11 @@
+node_modules/
+dist/
+build/
+.env
+*.log
+media/uploads/*
+!media/uploads/.gitkeep
+.DS_Store
+Thumbs.db
+coverage/
+.nyc_output/

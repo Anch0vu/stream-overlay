@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Базовые стили в темной теме (shadcn-стиль) */
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  /* Полоса прокрутки */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-background;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-muted rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/50;
+  }
+}
+
+@layer components {
+  /* Гlow-эффект для активных элементов */
+  .glow-primary {
+    box-shadow: 0 0 15px hsl(263.4 70% 50.4% / 0.3);
+  }
+
+  /* Статус-индикатор */
+  .status-dot {
+    @apply w-2 h-2 rounded-full;
+  }
+
+  .status-dot.online {
+    @apply bg-success-DEFAULT;
+    box-shadow: 0 0 6px hsl(142 76% 36% / 0.6);
+  }
+
+  .status-dot.offline {
+    @apply bg-destructive-DEFAULT;
+  }
+
+  /* Панель видеопревью */
+  .video-preview {
+    @apply relative rounded-lg overflow-hidden bg-black border border-border;
+    aspect-ratio: 16 / 9;
+  }
+
+  .video-preview video {
+    @apply w-full h-full object-contain;
+  }
+}
