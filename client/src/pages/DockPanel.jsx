@@ -17,7 +17,7 @@ import KeyGenerator from '../components/auth/KeyGenerator';
 import MediaMatrix from '../components/matrix/MediaMatrix';
 import { ToastProvider } from '../components/ui/toast';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
-import { Settings, Globe, Server } from 'lucide-react';
+import { Settings, Globe, Server, Copy, Check } from 'lucide-react';
 
 export default function DockPanel() {
   const { token, role, isStreamer } = useAuth();
@@ -27,6 +27,16 @@ export default function DockPanel() {
     connected
   );
   const [activeTab, setActiveTab] = useState('stream');
+  const [urlCopied, setUrlCopied] = useState(false);
+
+  const obsUrl = `${window.location.protocol}//${window.location.host}/obs`;
+
+  const copyObsUrl = () => {
+    navigator.clipboard.writeText(obsUrl).then(() => {
+      setUrlCopied(true);
+      setTimeout(() => setUrlCopied(false), 2000);
+    });
+  };
 
   // При подключении модератора — подписываемся на потоки
   useEffect(() => {
@@ -68,42 +78,71 @@ export default function DockPanel() {
 
       case 'settings':
         return (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <Settings className="h-4 w-4" />
-                Настройки
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="p-4 rounded-lg bg-secondary/30">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Globe className="h-4 w-4 text-primary" />
-                    <span className="text-sm font-medium">WebRTC</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Статус: {initialized ? 'Инициализировано' : 'Ожидание'}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Роль: {role}
-                  </p>
+          <div className="space-y-4">
+            {/* OBS Browser Source URL */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Globe className="h-4 w-4" />
+                  OBS Browser Source
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Вставьте этот URL как Browser Source в OBS. Включите «Прозрачный фон» в настройках источника.
+                </p>
+                <div className="flex items-center gap-2 p-3 rounded-lg bg-secondary/30 font-mono text-sm break-all">
+                  <span className="flex-1">{obsUrl}</span>
+                  <Button variant="ghost" size="icon" onClick={copyObsUrl} title="Копировать">
+                    {urlCopied
+                      ? <Check className="h-4 w-4 text-green-500" />
+                      : <Copy className="h-4 w-4" />}
+                  </Button>
                 </div>
-                <div className="p-4 rounded-lg bg-secondary/30">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Server className="h-4 w-4 text-primary" />
-                    <span className="text-sm font-medium">Сервер</span>
+                <p className="text-xs text-muted-foreground">
+                  Рекомендуемые размеры: 1920×1080. Размер совпадает с разрешением сцены OBS.
+                </p>
+              </CardContent>
+            </Card>
+
+            {/* Статус подключения */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Settings className="h-4 w-4" />
+                  Статус
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="p-4 rounded-lg bg-secondary/30">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Globe className="h-4 w-4 text-primary" />
+                      <span className="text-sm font-medium">WebRTC</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Статус: {initialized ? 'Инициализировано' : 'Ожидание'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Роль: {role}
+                    </p>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    WebSocket: {connected ? 'Подключено' : 'Отключено'}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Публикация: {publishing ? 'Активна' : 'Нет'}
-                  </p>
+                  <div className="p-4 rounded-lg bg-secondary/30">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Server className="h-4 w-4 text-primary" />
+                      <span className="text-sm font-medium">Сервер</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      WebSocket: {connected ? 'Подключено' : 'Отключено'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Публикация: {publishing ? 'Активна' : 'Нет'}
+                    </p>
+                  </div>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          </div>
         );
 
       default:

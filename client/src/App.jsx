@@ -8,6 +8,7 @@ import { AuthProvider, useAuth } from './hooks/useAuth';
 import LoginPage from './pages/LoginPage';
 import DockPanel from './pages/DockPanel';
 import StreamPage from './pages/StreamPage';
+import ObsOverlay from './pages/ObsOverlay';
 
 /** Защищённый маршрут — редирект на логин без токена */
 function ProtectedRoute({ children }) {
@@ -38,6 +39,8 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+          {/* OBS browser source — публичный маршрут, без авторизации */}
+          <Route path="/obs" element={<ObsOverlay />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </AuthProvider>

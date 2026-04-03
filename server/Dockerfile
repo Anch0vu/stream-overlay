@@ -3,9 +3,9 @@
 # Node.js + mediasoup SFU
 # ===================================
 
-FROM node:20-bullseye
+FROM node:22-bullseye
 
-# Устанавливаем зависимости для сборки mediasoup
+# Build deps for mediasoup native addon (requires python3 + g++ + make)
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
@@ -14,20 +14,25 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Копируем файлы зависимостей
+# Install ALL deps (including devDeps needed for mediasoup native build)
 COPY package.json package-lock.json* ./
+RUN npm ci
 
-# Устанавливаем зависимости
-RUN npm ci --only=production
-
-# Копируем исходный код
+# Copy source
 COPY . .
 
-# Создаём директорию для медиафайлов
+# Prune devDeps after native build is complete
+RUN npm prune --omit=dev
+
+# Media storage dir
 RUN mkdir -p /app/media/uploads
 
-# Порт сервера
-EXPOSE 3000
+# Logs dir (winston will write here)
+RUN mkdir -p /app/logs
 
-# Запуск сервера
+EXPOSE 3001
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+  CMD wget -qO- http://localhost:3001/api/health || exit 1
+
 CMD ["node", "src/index.js"]
