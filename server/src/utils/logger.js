@@ -3,8 +3,12 @@
  * Структурированные логи с уровнями через Winston
  */
 
+const fs = require('fs');
 const winston = require('winston');
 const config = require('../config');
+
+// Ensure logs directory exists before creating file transports
+fs.mkdirSync('logs', { recursive: true });
 
 // Формат для вывода логов
 const logFormat = winston.format.combine(

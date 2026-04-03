@@ -71,28 +71,35 @@ async function validateKey(key) {
 
 /**
  * Получение списка активных ключей для стримера
+ * Использует SCAN вместо KEYS — не блокирует Redis на больших наборах данных
  * @param {string} streamerId — идентификатор стримера
  * @returns {Array} — список активных ключей
  */
 async function getActiveKeys(streamerId) {
   const redis = getRedis();
-  const keys = await redis.keys(`${KEY_PREFIX}*`);
   const activeKeys = [];
 
-  for (const redisKey of keys) {
-    const data = await redis.get(redisKey);
-    if (data) {
-      const keyData = JSON.parse(data);
-      if (keyData.streamerId === streamerId && !keyData.used) {
-        const ttl = await redis.ttl(redisKey);
-        activeKeys.push({
-          key: redisKey.replace(KEY_PREFIX, ''),
-          ttl,
-          createdAt: keyData.createdAt,
-        });
+  // Итеративный SCAN безопасен для production Redis
+  let cursor = '0';
+  do {
+    const [nextCursor, batch] = await redis.scan(cursor, 'MATCH', `${KEY_PREFIX}*`, 'COUNT', 100);
+    cursor = nextCursor;
+
+    for (const redisKey of batch) {
+      const data = await redis.get(redisKey);
+      if (data) {
+        const keyData = JSON.parse(data);
+        if (keyData.streamerId === streamerId && !keyData.used) {
+          const ttl = await redis.ttl(redisKey);
+          activeKeys.push({
+            key: redisKey.replace(KEY_PREFIX, ''),
+            ttl,
+            createdAt: keyData.createdAt,
+          });
+        }
       }
     }
-  }
+  } while (cursor !== '0');
 
   return activeKeys;
 }

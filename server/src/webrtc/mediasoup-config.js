@@ -26,7 +26,7 @@ const routerMediaCodecs = [
     mimeType: 'video/VP8',
     clockRate: 90000,
     parameters: {
-      'x-google-start-bitrate': 1000,
+      'x-google-start-bitrate': 2000,
     },
   },
   {
@@ -35,7 +35,7 @@ const routerMediaCodecs = [
     clockRate: 90000,
     parameters: {
       'profile-id': 2,
-      'x-google-start-bitrate': 1000,
+      'x-google-start-bitrate': 2000,
     },
   },
   {
@@ -46,7 +46,7 @@ const routerMediaCodecs = [
       'packetization-mode': 1,
       'profile-level-id': '4d0032',
       'level-asymmetry-allowed': 1,
-      'x-google-start-bitrate': 1000,
+      'x-google-start-bitrate': 2000,
     },
   },
 ];
@@ -59,12 +59,13 @@ const webRtcTransportOptions = {
       announcedIp: config.mediasoup.announcedIp,
     },
   ],
-  initialAvailableOutgoingBitrate: 1000000,
+  // 2 Mbps initial — sufficient for 1080p overlay content
+  initialAvailableOutgoingBitrate: 2000000,
   minimumAvailableOutgoingBitrate: 600000,
   maxSctpMessageSize: 262144,
-  maxIncomingBitrate: 5000000,
-  // Отключаем TCP fallback для минимальной задержки
-  enableTcp: false,
+  maxIncomingBitrate: 8000000,
+  // TCP fallback enabled: helps users behind strict NAT/firewalls
+  enableTcp: true,
   enableUdp: true,
   preferUdp: true,
 };

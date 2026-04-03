@@ -87,9 +87,16 @@ async function startServer() {
   // --- Корректное завершение ---
   const shutdown = async (signal) => {
     logger.info(`Получен сигнал ${signal}, завершение...`);
+    // Force-exit if graceful shutdown takes longer than 10 seconds
+    const forceExit = setTimeout(() => {
+      logger.error('Принудительное завершение по таймауту');
+      process.exit(1);
+    }, 10000);
+    forceExit.unref();
     await room.close();
     httpServer.close(() => {
       logger.info('Сервер остановлен');
+      clearTimeout(forceExit);
       process.exit(0);
     });
   };

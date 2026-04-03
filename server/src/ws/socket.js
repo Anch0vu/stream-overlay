@@ -1,6 +1,10 @@
 /**
  * Модуль WebSocket соединений
- * Обработка сигнализации WebRTC и синхронизации док-панели
+ * Обработка сигнализации WebRTC и синхронизации dok-панели
+ *
+ * Namespaces:
+ *   /          — защищённый канал для стримера и модераторов (требует JWT)
+ *   /overlay   — публичный канал только-чтение для OBS browser source
  */
 
 const { Server } = require('socket.io');
@@ -21,22 +25,30 @@ function initSocketServer(httpServer, room) {
       methods: ['GET', 'POST'],
       credentials: true,
     },
-    // Авторизация WebSocket через JWT
+    // Origin check for the main namespace
     allowRequest: (req, callback) => {
-      // В режиме разработки разрешаем все подключения
       if (config.nodeEnv === 'development') {
         return callback(null, true);
       }
-      // Проверяем Origin
       const origin = req.headers.origin;
-      if (origin && origin.startsWith(config.corsOrigin)) {
+      // Strict equality — no startsWith to prevent prefix-matching attacks
+      if (origin === config.corsOrigin) {
+        return callback(null, true);
+      }
+      // Allow OBS browser source (no Origin header) on /overlay namespace
+      const url = req.url || '';
+      if (!origin && url.startsWith('/socket.io/?EIO') && url.includes('nsp=%2Foverlay')) {
         return callback(null, true);
       }
       callback('Недопустимый Origin', false);
     },
   });
 
-  // Middleware аутентификации для сокетов
+  // ─────────────────────────────────────────────
+  // MAIN NAMESPACE — требует JWT
+  // ─────────────────────────────────────────────
+
+  // Middleware аутентификации для основного namespace
   io.use((socket, next) => {
     const token = socket.handshake.auth.token;
 
@@ -54,14 +66,12 @@ function initSocketServer(httpServer, room) {
     }
   });
 
-  // Обработка подключений
   io.on('connection', (socket) => {
     const { role, id: userId } = socket.user;
     logger.info('WebSocket: подключение', { socketId: socket.id, role, userId });
 
     // --- WebRTC сигнализация ---
 
-    // Получение RTP capabilities роутера
     socket.on('getRouterRtpCapabilities', (callback) => {
       try {
         const capabilities = room.getRouterRtpCapabilities();
@@ -72,7 +82,6 @@ function initSocketServer(httpServer, room) {
       }
     });
 
-    // Создание транспорта
     socket.on('createTransport', async ({ direction }, callback) => {
       try {
         const transportData = await room.createTransport(socket.id, direction);
@@ -83,7 +92,6 @@ function initSocketServer(httpServer, room) {
       }
     });
 
-    // Подключение транспорта (DTLS)
     socket.on('connectTransport', async ({ transportId, dtlsParameters }, callback) => {
       try {
         await room.connectTransport(socket.id, transportId, dtlsParameters);
@@ -94,10 +102,8 @@ function initSocketServer(httpServer, room) {
       }
     });
 
-    // Создание продюсера (стример отправляет поток)
     socket.on('produce', async ({ transportId, kind, rtpParameters, appData }, callback) => {
       try {
-        // Только стример может создавать продюсеров
         if (role !== 'streamer') {
           return callback({ success: false, error: 'Только стример может публиковать поток' });
         }
@@ -108,9 +114,7 @@ function initSocketServer(httpServer, room) {
           appData,
         });
 
-        // Уведомляем всех о новом продюсере
         socket.broadcast.emit('newProducer', { producerId, kind });
-
         callback({ success: true, data: { producerId } });
       } catch (err) {
         logger.error('Ошибка создания продюсера', { error: err.message });
@@ -118,7 +122,6 @@ function initSocketServer(httpServer, room) {
       }
     });
 
-    // Создание консьюмера (модератор получает поток)
     socket.on('consume', async ({ transportId, producerId, rtpCapabilities }, callback) => {
       try {
         const consumerData = await room.consume(
@@ -134,7 +137,6 @@ function initSocketServer(httpServer, room) {
       }
     });
 
-    // Возобновление консьюмера
     socket.on('resumeConsumer', async ({ consumerId }, callback) => {
       try {
         await room.resumeConsumer(socket.id, consumerId);
@@ -145,34 +147,36 @@ function initSocketServer(httpServer, room) {
       }
     });
 
-    // Получение списка продюсеров
     socket.on('getProducers', (callback) => {
       const producerIds = room.getProducerIds();
       callback({ success: true, data: producerIds });
     });
 
-    // --- Управление стримом (Dock Panel) ---
+    // --- Управление стримом (только модератор или стример) ---
 
-    // Изменение громкости
     socket.on('setVolume', ({ producerId, volume }) => {
-      // Транслируем команду изменения громкости всем подключённым
+      if (role !== 'moderator' && role !== 'streamer') return;
       io.emit('volumeChanged', { producerId, volume });
-      logger.debug('Громкость изменена', { producerId, volume });
+      // Relay to OBS overlay namespace as well
+      overlayNsp.emit('volumeChanged', { producerId, volume });
+      logger.debug('Громкость изменена', { producerId, volume, by: role });
     });
 
-    // Управление overlay (медиаконтент поверх стрима)
     socket.on('setOverlay', ({ type, url, options }) => {
+      if (role !== 'moderator' && role !== 'streamer') return;
       io.emit('overlayChanged', { type, url, options });
-      logger.debug('Overlay обновлён', { type, url });
+      // Relay to OBS overlay namespace
+      overlayNsp.emit('overlayChanged', { type, url, options });
+      logger.debug('Overlay обновлён', { type, url, by: role });
     });
 
-    // Удаление overlay
     socket.on('removeOverlay', () => {
+      if (role !== 'moderator' && role !== 'streamer') return;
       io.emit('overlayRemoved');
-      logger.debug('Overlay удалён');
+      overlayNsp.emit('overlayRemoved');
+      logger.debug('Overlay удалён', { by: role });
     });
 
-    // Запрос статистики с сервера
     socket.on('getStats', async (callback) => {
       try {
         const stats = {
@@ -187,9 +191,10 @@ function initSocketServer(httpServer, room) {
 
     // --- Управление модераторами (только стример) ---
 
-    // Отключение модератора
     socket.on('kickPeer', ({ targetSocketId }) => {
       if (role !== 'streamer') return;
+      // Prevent kicking yourself
+      if (targetSocketId === socket.id) return;
 
       const targetSocket = io.sockets.sockets.get(targetSocketId);
       if (targetSocket) {
@@ -200,7 +205,6 @@ function initSocketServer(httpServer, room) {
       }
     });
 
-    // Перезапуск пира
     socket.on('restartPeer', async ({ targetSocketId }, callback) => {
       if (role !== 'streamer') {
         return callback({ success: false, error: 'Только стример может перезапускать пиров' });
@@ -214,13 +218,24 @@ function initSocketServer(httpServer, room) {
       callback({ success: true });
     });
 
-    // --- Отключение ---
     socket.on('disconnect', (reason) => {
       logger.info('WebSocket: отключение', { socketId: socket.id, role, reason });
       room.removePeer(socket.id);
-
-      // Уведомляем остальных
       socket.broadcast.emit('peerDisconnected', { socketId: socket.id });
+    });
+  });
+
+  // ─────────────────────────────────────────────
+  // /overlay NAMESPACE — публичный, только-чтение
+  // OBS browser source подключается сюда без JWT
+  // ─────────────────────────────────────────────
+  const overlayNsp = io.of('/overlay');
+
+  overlayNsp.on('connection', (socket) => {
+    logger.info('OBS overlay подключён', { socketId: socket.id });
+
+    socket.on('disconnect', (reason) => {
+      logger.info('OBS overlay отключён', { socketId: socket.id, reason });
     });
   });
 

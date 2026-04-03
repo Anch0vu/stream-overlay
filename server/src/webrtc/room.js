@@ -39,8 +39,7 @@ class Room {
 
       worker.on('died', () => {
         logger.error(`Воркер mediasoup #${i} умер, перезапуск...`);
-        // Перезапуск воркера через 2 секунды
-        setTimeout(() => this._replaceWorker(i), 2000);
+        setTimeout(() => this._replaceWorker(i, 1), 2000);
       });
 
       this.workers.push(worker);
@@ -56,20 +55,39 @@ class Room {
   }
 
   /**
-   * Замена упавшего воркера
+   * Замена упавшего воркера с экспоненциальным откатом
    * @param {number} index — индекс воркера для замены
+   * @param {number} attempt — номер попытки (для backoff)
    */
-  async _replaceWorker(index) {
+  async _replaceWorker(index, attempt = 1) {
+    const MAX_ATTEMPTS = 10;
+    const BASE_DELAY_MS = 2000;
+    const MAX_DELAY_MS = 30000;
+
+    if (attempt > MAX_ATTEMPTS) {
+      logger.error(`Воркер mediasoup #${index} не восстановлен после ${MAX_ATTEMPTS} попыток, сдаёмся`);
+      return;
+    }
+
     try {
       const worker = await mediasoup.createWorker(workerSettings);
       worker.on('died', () => {
         logger.error(`Воркер mediasoup #${index} повторно умер`);
-        setTimeout(() => this._replaceWorker(index), 2000);
+        const delay = Math.min(BASE_DELAY_MS * 2 ** (attempt - 1), MAX_DELAY_MS);
+        setTimeout(() => this._replaceWorker(index, attempt + 1), delay);
       });
       this.workers[index] = worker;
       logger.info(`Воркер mediasoup #${index} перезапущен, PID: ${worker.pid}`);
+
+      // Если упавший воркер был тем, на котором работает роутер — пересоздаём роутер
+      if (index === 0 && (!this.router || this.router.closed)) {
+        this.router = await worker.createRouter({ mediaCodecs: routerMediaCodecs });
+        logger.info('Роутер mediasoup пересоздан на новом воркере #0');
+      }
     } catch (err) {
-      logger.error('Ошибка перезапуска воркера', { error: err.message });
+      logger.error('Ошибка перезапуска воркера', { error: err.message, attempt });
+      const delay = Math.min(BASE_DELAY_MS * 2 ** (attempt - 1), MAX_DELAY_MS);
+      setTimeout(() => this._replaceWorker(index, attempt + 1), delay);
     }
   }
 

@@ -16,17 +16,17 @@ export default defineConfig({
     proxy: {
       // Проксирование API запросов к серверу
       '/api': {
-        target: 'http://webrtc-node:3000',
+        target: 'http://webrtc-node:3001',
         changeOrigin: true,
       },
-      // Проксирование WebSocket
+      // Проксирование WebSocket (основной + /overlay namespace)
       '/socket.io': {
-        target: 'http://webrtc-node:3000',
+        target: 'http://webrtc-node:3001',
         ws: true,
       },
       // Проксирование медиафайлов
       '/media': {
-        target: 'http://webrtc-node:3000',
+        target: 'http://webrtc-node:3001',
         changeOrigin: true,
       },
     },

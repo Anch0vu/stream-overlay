@@ -1,18 +1,27 @@
 /**
  * Менеджер оверлеев
  * Управление отображением медиа поверх стрима
+ * Показывает синхронизированный превью того, что видит OBS source
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
 import { Switch } from '../ui/switch';
 import { Slider } from '../ui/slider';
-import { Layers, X, Move, RotateCcw } from 'lucide-react';
+import { Badge } from '../ui/badge';
+import { Layers, X, Volume2, VolumeX, Music, MonitorPlay } from 'lucide-react';
+
+function getMediaKind(url = '') {
+  if (/\.(mp3|ogg|wav|aac|flac)(\?|$)/i.test(url)) return 'audio';
+  if (/\.(mp4|webm|mov)(\?|$)/i.test(url)) return 'video';
+  return 'image';
+}
 
 export default function OverlayManager({ socket }) {
   const [activeOverlay, setActiveOverlay] = useState(null);
   const [overlayOpacity, setOverlayOpacity] = useState(100);
-  const [overlayVisible, setOverlayVisible] = useState(true);
+  const [audioLoop, setAudioLoop] = useState(false);
+  const previewAudioRef = useRef(null);
 
   // Слушаем события оверлея
   useEffect(() => {
@@ -20,7 +29,7 @@ export default function OverlayManager({ socket }) {
 
     const handleOverlayChanged = (data) => {
       setActiveOverlay(data);
-      setOverlayVisible(true);
+      setOverlayOpacity(Math.round((data.options?.opacity ?? 1) * 100));
     };
 
     const handleOverlayRemoved = () => {
@@ -44,19 +53,37 @@ export default function OverlayManager({ socket }) {
     setActiveOverlay(null);
   }, [socket]);
 
-  /** Изменение прозрачности */
+  /** Изменение прозрачности — отправляем обновлённый overlay с новой opacity */
   const handleOpacityChange = useCallback(
     (value) => {
       setOverlayOpacity(value);
-      if (socket?.connected) {
+      if (socket?.connected && activeOverlay) {
         socket.emit('setOverlay', {
           ...activeOverlay,
-          options: { ...activeOverlay?.options, opacity: value / 100 },
+          options: { ...activeOverlay.options, opacity: value / 100 },
         });
       }
     },
     [socket, activeOverlay]
   );
+
+  /** Переключение loop для аудио */
+  const handleLoopChange = useCallback(
+    (checked) => {
+      setAudioLoop(checked);
+      if (socket?.connected && activeOverlay) {
+        socket.emit('setOverlay', {
+          ...activeOverlay,
+          options: { ...activeOverlay.options, loop: checked },
+        });
+      }
+    },
+    [socket, activeOverlay]
+  );
+
+  const mediaKind = activeOverlay ? getMediaKind(activeOverlay.url) : null;
+  const isAudio = mediaKind === 'audio';
+  const isVideo = mediaKind === 'video';
 
   return (
     <Card>
@@ -66,68 +93,96 @@ export default function OverlayManager({ socket }) {
             <Layers className="h-4 w-4" />
             Оверлей
           </CardTitle>
-          {activeOverlay && (
-            <Button variant="ghost" size="icon" onClick={handleRemoveOverlay} title="Убрать">
-              <X className="h-4 w-4" />
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            {activeOverlay && (
+              <Badge variant="success" className="text-xs">LIVE</Badge>
+            )}
+            {activeOverlay && (
+              <Button variant="ghost" size="icon" onClick={handleRemoveOverlay} title="Убрать оверлей">
+                <X className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
         </div>
       </CardHeader>
       <CardContent>
         {activeOverlay ? (
           <div className="space-y-4">
-            {/* Превью оверлея */}
-            <div className="rounded-lg border border-border overflow-hidden bg-black/50 aspect-video flex items-center justify-center">
-              {activeOverlay.url && (
-                /\.(mp4|webm)$/i.test(activeOverlay.url) ? (
-                  <video
+            {/* Превью — синхронизирован с тем, что видит OBS source */}
+            <div className="rounded-lg border border-border overflow-hidden bg-[#111] aspect-video flex items-center justify-center relative">
+              <div className="absolute top-2 left-2 z-10">
+                <Badge variant="secondary" className="text-xs flex items-center gap-1">
+                  <MonitorPlay className="h-3 w-3" />
+                  Превью OBS
+                </Badge>
+              </div>
+
+              {isAudio ? (
+                <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                  <Music className="h-10 w-10 opacity-50" />
+                  <p className="text-xs">Аудио: {activeOverlay.url.split('/').pop()}</p>
+                  <audio
+                    ref={previewAudioRef}
                     src={activeOverlay.url}
-                    className="max-w-full max-h-full"
-                    style={{ opacity: overlayOpacity / 100 }}
-                    autoPlay
-                    loop
-                    muted
+                    controls
+                    loop={audioLoop}
+                    className="w-full max-w-xs mt-1"
                   />
-                ) : (
-                  <img
-                    src={activeOverlay.url}
-                    alt="Overlay"
-                    className="max-w-full max-h-full object-contain"
-                    style={{ opacity: overlayOpacity / 100 }}
-                  />
-                )
+                </div>
+              ) : isVideo ? (
+                <video
+                  src={activeOverlay.url}
+                  className="max-w-full max-h-full"
+                  style={{ opacity: overlayOpacity / 100 }}
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                />
+              ) : (
+                <img
+                  src={activeOverlay.url}
+                  alt="Overlay preview"
+                  className="max-w-full max-h-full object-contain"
+                  style={{ opacity: overlayOpacity / 100 }}
+                />
               )}
             </div>
 
-            {/* Управление прозрачностью */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-sm">Прозрачность</span>
-                <span className="text-sm text-muted-foreground">{overlayOpacity}%</span>
+            {/* Управление прозрачностью (не для аудио) */}
+            {!isAudio && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">Прозрачность</span>
+                  <span className="text-sm text-muted-foreground">{overlayOpacity}%</span>
+                </div>
+                <Slider
+                  value={overlayOpacity}
+                  onChange={handleOpacityChange}
+                />
               </div>
-              <Slider
-                value={overlayOpacity}
-                onChange={handleOpacityChange}
-              />
-            </div>
+            )}
 
-            {/* Переключатель видимости */}
-            <div className="flex items-center justify-between">
-              <span className="text-sm">Отображение</span>
-              <Switch
-                checked={overlayVisible}
-                onCheckedChange={setOverlayVisible}
-              />
-            </div>
+            {/* Loop для аудио */}
+            {isAudio && (
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Volume2 className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm">Повтор</span>
+                </div>
+                <Switch
+                  checked={audioLoop}
+                  onCheckedChange={handleLoopChange}
+                />
+              </div>
+            )}
           </div>
         ) : (
-          <div className="text-center py-6">
-            <Layers className="h-8 w-8 mx-auto mb-2 text-muted-foreground/30" />
-            <p className="text-sm text-muted-foreground">
-              Нет активного оверлея
-            </p>
+          <div className="text-center py-8">
+            <Layers className="h-10 w-10 mx-auto mb-3 text-muted-foreground/20" />
+            <p className="text-sm text-muted-foreground">Нет активного оверлея</p>
             <p className="text-xs text-muted-foreground mt-1">
-              Выберите медиа для отображения на стриме
+              Выберите медиафайл и нажмите «Показать»
             </p>
           </div>
         )}

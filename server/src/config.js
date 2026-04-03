@@ -9,7 +9,7 @@ const config = {
   // --- Общие ---
   nodeEnv: process.env.NODE_ENV || 'development',
   host: process.env.HOST || '0.0.0.0',
-  port: parseInt(process.env.SERVER_PORT, 10) || 3000,
+  port: parseInt(process.env.SERVER_PORT, 10) || 3001,
 
   // --- Redis ---
   redis: {
