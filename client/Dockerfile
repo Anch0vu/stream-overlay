@@ -11,8 +11,8 @@ WORKDIR /app
 # Копируем файлы зависимостей
 COPY package.json package-lock.json* ./
 
-# Устанавливаем зависимости
-RUN npm ci
+# Устанавливаем зависимости (npm install — работает с и без lock-файла)
+RUN npm install --prefer-offline 2>/dev/null || npm install
 
 # Копируем исходный код
 COPY . .
