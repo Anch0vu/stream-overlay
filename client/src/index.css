@@ -61,4 +61,30 @@
   .video-preview video {
     @apply w-full h-full object-contain;
   }
+
+  /* Пульсирующий LIVE-индикатор */
+  .live-pulse {
+    @apply inline-flex items-center gap-1.5;
+  }
+
+  .live-pulse::before {
+    content: '';
+    @apply w-2 h-2 rounded-full bg-red-500;
+    animation: live-blink 1.5s infinite;
+  }
+
+  @keyframes live-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* Карточка с подсветкой при наведении */
+  .card-hover-glow:hover {
+    box-shadow: 0 0 20px hsl(263.4 70% 50.4% / 0.15);
+  }
+
+  /* Tabular nums для метрик */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
 }

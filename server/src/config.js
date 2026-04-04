@@ -39,7 +39,7 @@ const config = {
     listenIp: process.env.MEDIASOUP_LISTEN_IP || '0.0.0.0',
     announcedIp: process.env.MEDIASOUP_ANNOUNCED_IP || null,
     minPort: parseInt(process.env.MEDIASOUP_MIN_PORT, 10) || 40000,
-    maxPort: parseInt(process.env.MEDIASOUP_MAX_PORT, 10) || 40100,
+    maxPort: parseInt(process.env.MEDIASOUP_MAX_PORT, 10) || 49999,
     logLevel: process.env.MEDIASOUP_LOG_LEVEL || 'warn',
   },
 
