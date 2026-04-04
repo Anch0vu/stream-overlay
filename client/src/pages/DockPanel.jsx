@@ -10,6 +10,8 @@ import Header from '../components/layout/Header';
 import Sidebar from '../components/layout/Sidebar';
 import StreamPreview from '../components/stream/StreamPreview';
 import StreamStats from '../components/stream/StreamStats';
+import ConnectionStatus from '../components/stream/ConnectionStatus';
+import PerformanceDashboard from '../components/stream/PerformanceDashboard';
 import VolumeControl from '../components/stream/VolumeControl';
 import MediaPanel from '../components/media/MediaPanel';
 import OverlayManager from '../components/media/OverlayManager';
@@ -17,6 +19,7 @@ import KeyGenerator from '../components/auth/KeyGenerator';
 import MediaMatrix from '../components/matrix/MediaMatrix';
 import { ToastProvider } from '../components/ui/toast';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { Button } from '../components/ui/button';
 import { Settings, Globe, Server, Copy, Check } from 'lucide-react';
 
 export default function DockPanel() {
@@ -55,7 +58,15 @@ export default function DockPanel() {
               stream={remoteStreams[0] || null}
               publishing={publishing}
             />
-            <StreamStats stats={stats} />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <StreamStats stats={stats} />
+              <ConnectionStatus
+                connected={connected}
+                initialized={initialized}
+                publishing={publishing}
+                role={role}
+              />
+            </div>
           </div>
         );
 
@@ -75,6 +86,19 @@ export default function DockPanel() {
 
       case 'matrix':
         return isStreamer ? <MediaMatrix socket={socket} /> : null;
+
+      case 'monitoring':
+        return (
+          <div className="space-y-4">
+            <PerformanceDashboard socket={socket} connected={connected} />
+            <ConnectionStatus
+              connected={connected}
+              initialized={initialized}
+              publishing={publishing}
+              role={role}
+            />
+          </div>
+        );
 
       case 'settings':
         return (

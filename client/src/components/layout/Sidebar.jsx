@@ -9,6 +9,7 @@ import {
   Image,
   Key,
   LayoutGrid,
+  Activity,
   Settings,
 } from 'lucide-react';
 
@@ -18,6 +19,7 @@ const menuItems = [
   { id: 'media', label: 'Медиа', icon: Image },
   { id: 'keys', label: 'Ключи', icon: Key },
   { id: 'matrix', label: 'Матрица', icon: LayoutGrid },
+  { id: 'monitoring', label: 'Мониторинг', icon: Activity },
   { id: 'settings', label: 'Настройки', icon: Settings },
 ];
 
@@ -25,7 +27,7 @@ export default function Sidebar({ activeTab, onTabChange, isStreamer }) {
   // Фильтруем пункты меню для модератора (нет доступа к ключам и матрице)
   const visibleItems = isStreamer
     ? menuItems
-    : menuItems.filter((item) => !['keys', 'matrix', 'settings'].includes(item.id));
+    : menuItems.filter((item) => !['keys', 'matrix'].includes(item.id));
 
   return (
     <aside className="w-16 lg:w-56 border-r border-border bg-background flex-shrink-0">
