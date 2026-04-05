@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # ===================================
 # Dockerfile для серверной части (WebRTC Node)
 # Node.js + mediasoup SFU
@@ -5,30 +6,34 @@
 
 FROM node:22-bullseye
 
-# Build deps for mediasoup native addon (requires python3 + g++ + make)
-RUN apt-get update && apt-get install -y \
+# Параллельная компиляция mediasoup C++ worker на всех ядрах процессора
+ENV MAKEFLAGS="-j$(nproc)"
+
+# Build deps для mediasoup native addon
+# --mount=type=cache кэширует пакеты apt между пересборками (не скачивает повторно)
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     build-essential \
-    && rm -rf /var/lib/apt/lists/*
+    pkg-config
 
 WORKDIR /app
 
-# Install ALL deps (including devDeps needed for mediasoup native build)
 COPY package.json package-lock.json* ./
-RUN npm ci
 
-# Copy source
+# --mount=type=cache кэширует npm registry между пересборками
+# Если package.json не менялся — этот слой берётся из Docker layer cache (0s)
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci
+
 COPY . .
 
-# Prune devDeps after native build is complete
+# Удаляем devDeps после нативной сборки
 RUN npm prune --omit=dev
 
-# Media storage dir
-RUN mkdir -p /app/media/uploads
-
-# Logs dir (winston will write here)
-RUN mkdir -p /app/logs
+RUN mkdir -p /app/media/uploads /app/logs
 
 EXPOSE 3001
 
