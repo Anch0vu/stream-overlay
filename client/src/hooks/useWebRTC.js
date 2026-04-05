@@ -109,6 +109,78 @@ export function useWebRTC(socket, connected) {
     return () => socket.off('newProducer', handleNewProducer);
   }, [socket, connected, initialized]);
 
+  // Сбор реальных WebRTC-метрик каждые 2 секунды через RTCStatsReport
+  useEffect(() => {
+    if (!initialized) return;
+
+    // Сохраняем предыдущие байты для расчёта битрейта
+    let prevBytes = 0;
+    let prevTs = performance.now();
+
+    const collectStats = async () => {
+      const client = clientRef.current;
+      if (!client) return;
+
+      // Для стримера берём sendTransport, для модератора — recvTransport
+      const transport = client.sendTransport || client.recvTransport;
+      if (!transport) return;
+
+      let report;
+      try {
+        report = await transport.getStats();
+      } catch {
+        return;
+      }
+
+      let fps = 0;
+      let totalBytes = 0;
+      let latencyMs = 0;
+      let packetsLost = 0;
+      let packetsTotal = 0;
+
+      report.forEach((stat) => {
+        // Видео-трек: fps и потеря пакетов
+        if ((stat.type === 'outbound-rtp' || stat.type === 'inbound-rtp') && stat.kind === 'video') {
+          fps = Math.round(stat.framesPerSecond || fps);
+          packetsLost += stat.packetsLost || 0;
+          packetsTotal += (stat.packetsSent || stat.packetsReceived || 0) + (stat.packetsLost || 0);
+          totalBytes += stat.bytesSent || stat.bytesReceived || 0;
+        }
+        // ICE candidate-pair: RTT как latency
+        if (stat.type === 'candidate-pair' && stat.state === 'succeeded') {
+          if (stat.currentRoundTripTime != null) {
+            latencyMs = Math.round(stat.currentRoundTripTime * 1000);
+          }
+        }
+      });
+
+      // Битрейт = delta bytes * 8 / delta time
+      const now = performance.now();
+      const dt = (now - prevTs) / 1000;
+      const bitrateBps = dt > 0 && totalBytes > prevBytes
+        ? ((totalBytes - prevBytes) * 8) / dt
+        : 0;
+      prevBytes = totalBytes;
+      prevTs = now;
+
+      const packetLossPct = packetsTotal > 0
+        ? Math.round((packetsLost / packetsTotal) * 1000) / 10
+        : 0;
+
+      setStats({
+        fps,
+        bitrate: Math.max(0, bitrateBps),
+        latency: latencyMs,
+        packetLoss: packetLossPct,
+      });
+    };
+
+    // Первый сбор сразу, потом каждые 2с
+    collectStats();
+    const interval = setInterval(collectStats, 2000);
+    return () => clearInterval(interval);
+  }, [initialized]);
+
   return {
     initialized,
     publishing,
