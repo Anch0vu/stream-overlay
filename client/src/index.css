@@ -44,12 +44,12 @@
   }
 
   .status-dot.online {
-    @apply bg-success-DEFAULT;
+    background-color: hsl(142 76% 36%);
     box-shadow: 0 0 6px hsl(142 76% 36% / 0.6);
   }
 
   .status-dot.offline {
-    @apply bg-destructive-DEFAULT;
+    background-color: hsl(0 62.8% 30.6%);
   }
 
   /* Панель видеопревью */
