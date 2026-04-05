@@ -474,16 +474,15 @@ show_config() {
   server_port=$(env_get SERVER_PORT)
   cors=$(env_get CORS_ORIGIN)
 
-  printf "  ${DIM}%-32s${RESET}  %s\n" "Публичный IP"      "${BCYN}${pub_ip}${RESET}"
-  printf "  ${DIM}%-32s${RESET}  %s\n" "Порт веб-панели"   "${BCYN}${web_port}${RESET}"
-  printf "  ${DIM}%-32s${RESET}  %s\n" "Порт сигн. сервера" "${BCYN}${server_port}${RESET}"
-  printf "  ${DIM}%-32s${RESET}  %s\n" "CORS Origin"        "${BCYN}${cors}${RESET}"
-  printf "  ${DIM}%-32s${RESET}  %s\n" "UDP диапазон" \
-    "${BCYN}$(env_get MEDIASOUP_MIN_PORT)–$(env_get MEDIASOUP_MAX_PORT)${RESET}"
-  printf "  ${DIM}%-32s${RESET}  %s\n" "TURN URL"           "${BCYN}$(env_get TURN_SERVER_URL)${RESET}"
-  printf "  ${DIM}%-32s${RESET}  %s\n" "Redis host:port" \
-    "${BCYN}$(env_get REDIS_HOST):$(env_get REDIS_PORT)${RESET}"
-  printf "  ${DIM}%-32s${RESET}  %s\n" "Node ENV"           "${BCYN}$(env_get NODE_ENV)${RESET}"
+  _cfg_row() { printf "  ${DIM}%-28s${RESET}  ${BCYN}%s${RESET}\n" "$1" "$2"; }
+  _cfg_row "Публичный IP"       "${pub_ip}"
+  _cfg_row "Порт веб-панели"    "${web_port}"
+  _cfg_row "Порт сигн. сервера" "${server_port}"
+  _cfg_row "CORS Origin"        "${cors}"
+  _cfg_row "UDP диапазон"       "$(env_get MEDIASOUP_MIN_PORT)–$(env_get MEDIASOUP_MAX_PORT)"
+  _cfg_row "TURN URL"           "$(env_get TURN_SERVER_URL)"
+  _cfg_row "Redis host:port"    "$(env_get REDIS_HOST):$(env_get REDIS_PORT)"
+  _cfg_row "Node ENV"           "$(env_get NODE_ENV)"
   blank
 
   hr

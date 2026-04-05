@@ -66,6 +66,9 @@ function initSocketServer(httpServer, room) {
     }
   });
 
+  // Объявляем overlayNsp до io.on('connection') чтобы он был доступен внутри обработчиков
+  const overlayNsp = io.of('/overlay');
+
   io.on('connection', (socket) => {
     const { role, id: userId } = socket.user;
     logger.info('WebSocket: подключение', { socketId: socket.id, role, userId });
@@ -228,9 +231,8 @@ function initSocketServer(httpServer, room) {
   // ─────────────────────────────────────────────
   // /overlay NAMESPACE — публичный, только-чтение
   // OBS browser source подключается сюда без JWT
+  // (overlayNsp объявлен выше, перед io.on('connection'))
   // ─────────────────────────────────────────────
-  const overlayNsp = io.of('/overlay');
-
   overlayNsp.on('connection', (socket) => {
     logger.info('OBS overlay подключён', { socketId: socket.id });
 
