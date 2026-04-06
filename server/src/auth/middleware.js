@@ -72,7 +72,9 @@ function originCheck(req, res, next) {
     return next();
   }
 
-  if (!origin || !origin.startsWith(allowed)) {
+  // Строгое равенство — startsWith уязвимо к атакам вида:
+  // Origin: http://allowed.com:13777.evil.com
+  if (!origin || origin !== allowed) {
     logger.warn('Запрос с неразрешённого Origin', { origin });
     return res.status(403).json({ error: 'Недопустимый источник запроса' });
   }
