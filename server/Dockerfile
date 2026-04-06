@@ -7,22 +7,23 @@
 FROM node:22-bullseye
 
 # ── Стратегия сборки mediasoup ─────────────────────────────────────────────
-# По умолчанию mediasoup пытается скачать prebuilt-бинарь с GitHub Releases
-# (~5-10 МБ, <10 секунд). Только если скачивание недоступно — компилирует из
-# исходников (5-10 минут). Оба пути обрабатываются одним npm ci.
+# mediasoup скачивает prebuilt-бинарь с GitHub Releases (~5-10 МБ, <10 сек)
+# автоматически, если переменная MEDIASOUP_SKIP_WORKER_PREBUILT_DOWNLOAD не
+# задана вообще. Любое непустое значение (в т.ч. строка "false") воспринимается
+# JS как truthy → компиляция из исходников. Поэтому переменную НЕ задаём.
 #
-# MEDIASOUP_SKIP_WORKER_PREBUILT_DOWNLOAD=false  → предпочесть скачивание (default)
-# MAKEFLAGS="-j$(nproc)"                         → параллельная компиляция, если всё же нужна
+# MAKEFLAGS="-j$(nproc)"  → параллельная компиляция, если prebuilt недоступен
 # ──────────────────────────────────────────────────────────────────────────
-ENV MEDIASOUP_SKIP_WORKER_PREBUILT_DOWNLOAD=false
 ENV MAKEFLAGS="-j$(nproc)"
 
 # Build deps — нужны только если prebuilt не удалось скачать и идёт компиляция.
+# python3-pip требуется mediasoup для сборки invoke-тулинга нативного воркера.
 # Кэшируются между пересборками через BuildKit cache mount.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
     python3 \
+    python3-pip \
     build-essential \
     pkg-config \
   && rm -rf /var/lib/apt/lists/*
