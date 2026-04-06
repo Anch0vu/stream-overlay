@@ -1,12 +1,16 @@
 # TOON-dok — OnionRP Streaming Tool
 
 ```
+                                                       /\   /\
+                                                      ( OwO )
+                                                       )   (   )~
   ████████╗ ██████╗  ██████╗ ███╗   ██╗      ██████╗  ██████╗ ██╗  ██╗
      ██╔══╝██╔═══██╗██╔═══██╗████╗  ██║      ██╔══██╗██╔═══██╗██║ ██╔╝
      ██║   ██║   ██║██║   ██║██╔██╗ ██║█████╗██║  ██║██║   ██║█████╔╝
      ██║   ██║   ██║██║   ██║██║╚██╗██║╚════╝██║  ██║██║   ██║██╔═██╗
      ██║   ╚██████╔╝╚██████╔╝██║ ╚████║      ██████╔╝╚██████╔╝██║  ██╗
      ╚═╝    ╚═════╝  ╚═════╝ ╚═╝  ╚═══╝      ╚═════╝  ╚═════╝ ╚═╝  ╚═╝
+                                                               ~~~~w~~
 ```
 
 **WebRTC SFU** с минимальной задержкой для OBS-стримов: dock-панель управления, оверлеи, ключи модераторов, статистика в реальном времени.
@@ -15,24 +19,14 @@
 
 ## Быстрый старт
 
-### Через CLI-установщик (рекомендуется)
-
 ```bash
 git clone https://github.com/Anch0vu/stream-overlay.git
 cd stream-overlay
 bash install.sh
 ```
 
-Откроется интерактивное меню — выберите **1 → Первоначальная установка**.
-
-### Вручную
-
-```bash
-cp .env.example .env
-# Отредактируйте .env: укажите IP, пароли (см. раздел «Переменные окружения»)
-nano .env
-docker compose up -d --build
-```
+Откроется интерактивное меню — выберите **1 → Первоначальная установка**.  
+Мастер автоматически определит IP, сгенерирует пароли, обнаружит системный Redis и запустит сборку Docker-образов.
 
 ---
 
@@ -40,37 +34,42 @@ docker compose up -d --build
 
 ```
   ┌─────────────────────────────────────────────────────┐
-  │  TOON-dok — OnionRP Streaming Tool                  │
-  │  WebRTC · mediasoup SFU · OBS Overlay               │
-  ├─────────────────────────────────────────────────────┤
-  │   1  Первоначальная установка / Мастер настройки    │
+  │   1  Установка / Мастер настройки                   │
   │   2  Управление сервисами                           │
-  │   3  Показать статус                                │
-  │   4  Просмотр логов                                 │
-  │   5  Генерация ключа модератора                     │
+  │   3  Статус                                         │
+  │   4  Логи                                           │
+  │   5  Ключ модератора                                │
   │   6  Текущая конфигурация                           │
   │   7  Редактировать .env                             │
-  │   8  Резервное копирование                          │
-  │   9  Обновить (git pull + rebuild)                  │
+  │   8  Резервная копия                                │
+  │   9  Обновить (git pull)                            │
   │  10  Деинсталляция                                  │
   │   0  Выход                                          │
   └─────────────────────────────────────────────────────┘
 ```
 
-Мастер настройки автоматически определяет публичный IP, генерирует все пароли и обновляет `.env` + `coturn/turnserver.conf`.
+### Что делает мастер настройки
 
-### Неинтерактивный (CI/автоматизация)
+1. **Публичный IP** — определяется автоматически через `ipify`
+2. **Redis** — обнаруживает системный Redis на порту 6379; предлагает использовать его или запустить Docker-контейнер (нет конфликта портов)
+3. **Пароли** — все генерируются автоматически, если не указаны вручную (Redis, JWT, стример, TURN)
+4. **Firewall** — после запуска проверяет `ufw`/`iptables` и предупреждает, если UDP-порты WebRTC не открыты
+5. **Healthcheck** — опрашивает `/api/health` до 90 секунд и сообщает, когда сервис готов
+6. **Доступы** — выводит пароль стримера прямо в терминал после успешного запуска
+
+### Неинтерактивный режим (CI / автоматизация)
 
 ```bash
-bash install.sh start        # запустить сервисы
-bash install.sh stop         # остановить
-bash install.sh restart      # перезапустить
-bash install.sh build        # пересобрать образы и запустить
-bash install.sh status       # показать статус
-bash install.sh logs         # логи webrtc-node
-bash install.sh logs nginx   # логи конкретного сервиса
-bash install.sh update       # git pull + rebuild
-bash install.sh uninstall    # удалить контейнеры и volumes
+bash install.sh install     # запустить мастер
+bash install.sh start       # запустить сервисы
+bash install.sh stop        # остановить
+bash install.sh restart     # перезапустить
+bash install.sh build       # пересобрать образы и запустить
+bash install.sh status      # статус контейнеров
+bash install.sh logs        # логи всех сервисов (50 строк)
+bash install.sh logs nginx  # логи конкретного сервиса
+bash install.sh update      # git pull + показать новые коммиты + rebuild
+bash install.sh uninstall   # удалить контейнеры и volumes
 ```
 
 ---
@@ -81,7 +80,7 @@ bash install.sh uninstall    # удалить контейнеры и volumes
                          Internet
                              │
                     ┌────────▼────────┐
-                    │   nginx :13777  │  ← HTTP/WS revers proxy
+                    │   nginx :13777  │  ← реверс-прокси HTTP/WS
                     └────────┬────────┘
                              │
            ┌─────────────────┼──────────────────┐
@@ -92,7 +91,7 @@ bash install.sh uninstall    # удалить контейнеры и volumes
     └─────────────┘  └───────┬───────┘  └─────────────┘
                              │
                       ┌──────▼──────┐
-                      │    Redis    │
+                      │    Redis    │  ← Docker или системный
                       │   :6379     │
                       └─────────────┘
                              │
@@ -111,11 +110,14 @@ bash install.sh uninstall    # удалить контейнеры и volumes
 | `coturn` | NAT traversal TURN | 3478 | 3478 UDP+TCP |
 | mediasoup RTC | UDP relay | — | 40000–49999 UDP |
 
+> **Redis** запускается в Docker только при выборе `REDIS_MODE=docker` (профиль `docker-redis`).  
+> При `REDIS_MODE=external` используется системный Redis через `host.docker.internal`.
+
 ---
 
 ## Переменные окружения
 
-Все настройки хранятся в `.env` (создаётся из `.env.example`).
+Все настройки хранятся в `.env` (создаётся из `.env.example`, права `600`).
 
 ### Обязательные
 
@@ -128,7 +130,7 @@ bash install.sh uninstall    # удалить контейнеры и volumes
 | `TURN_SERVER_PASSWORD` | Пароль TURN | `turnP@ss` |
 | `CORS_ORIGIN` | URL фронтенда | `http://95.1.2.3:13777` |
 
-### Сетевые параметры
+### Сетевые
 
 | Переменная | По умолчанию | Описание |
 |-----------|-------------|----------|
@@ -142,7 +144,8 @@ bash install.sh uninstall    # удалить контейнеры и volumes
 
 | Переменная | По умолчанию | Описание |
 |-----------|-------------|----------|
-| `REDIS_HOST` | `redis` | Хост Redis (имя сервиса Docker) |
+| `REDIS_MODE` | `docker` | `docker` или `external` |
+| `REDIS_HOST` | `redis` | `redis` (Docker) или `host.docker.internal` (системный) |
 | `REDIS_PORT` | `6379` | Порт Redis |
 
 ### JWT и авторизация
@@ -157,28 +160,26 @@ bash install.sh uninstall    # удалить контейнеры и volumes
 | Переменная | Пример | Описание |
 |-----------|--------|----------|
 | `TURN_SERVER_URL` | `turn:95.1.2.3:3478` | URL TURN |
-| `TURN_SERVER_USERNAME` | `onionrp` | Имя пользователя |
+| `TURN_SERVER_USERNAME` | `onionrp` | Имя пользователя coturn |
 | `TURN_SERVER_PASSWORD` | `turnP@ss` | Пароль |
 
 ### Rate Limiting
 
 | Переменная | По умолчанию | Описание |
 |-----------|-------------|----------|
-| `RATE_LIMIT_WINDOW_MS` | `60000` | Окно ограничения (мс) |
+| `RATE_LIMIT_WINDOW_MS` | `60000` | Окно (мс) |
 | `RATE_LIMIT_MAX_REQUESTS` | `100` | Максимум запросов в окне |
 
 ---
 
 ## Порты и файрвол
 
-Откройте следующие порты на сервере:
-
 ```bash
-# UFW (Ubuntu)
-ufw allow 13777/tcp    # Веб-панель
-ufw allow 3478/tcp     # TURN
-ufw allow 3478/udp     # TURN
-ufw allow 40000:49999/udp  # mediasoup RTC
+# Ubuntu (ufw)
+ufw allow 13777/tcp        # Веб-панель
+ufw allow 3478/tcp
+ufw allow 3478/udp         # TURN
+ufw allow 40000:49999/udp  # mediasoup WebRTC
 ```
 
 | Порт | Протокол | Назначение |
@@ -187,42 +188,29 @@ ufw allow 40000:49999/udp  # mediasoup RTC
 | 3478 | TCP+UDP | TURN (coturn) |
 | 40000–49999 | UDP | mediasoup WebRTC |
 
+> `install.sh` проверяет открытые порты сразу после деплоя и предупреждает, если WebRTC-диапазон заблокирован.
+
 ---
 
-## Первый запуск шаг за шагом
-
-### 1. Клонировать репозиторий
+## Пошаговый первый запуск
 
 ```bash
+# 1. Клонировать
 git clone https://github.com/Anch0vu/stream-overlay.git
 cd stream-overlay
-```
 
-### 2. Запустить мастер настройки
-
-```bash
+# 2. Мастер настройки
 bash install.sh
-# Выбрать: 1 → Первоначальная установка
-```
+# → Выбрать: 1 → Первоначальная установка
+# → Подтвердить IP, оставить пароли пустыми (автогенерация)
+# → При вопросе про Redis: 1 если порт 6379 занят, 1 если свободен
 
-Мастер спросит:
-- Публичный IP (определяется автоматически)
-- Внешний порт панели (по умолчанию `13777`)
-- CORS Origin
-- Пароли (можно оставить пустыми — сгенерируются автоматически)
-- UDP диапазон для WebRTC
-
-### 3. Открыть порты
-
-```bash
+# 3. Открыть порты (если ufw активен)
 ufw allow 13777/tcp && ufw allow 3478 && ufw allow 40000:49999/udp
-```
 
-### 4. Проверить работу
-
-```bash
+# 4. Убедиться в работе
 curl http://YOUR_IP:13777/api/health
-# → {"status":"ok"}
+# → {"status":"ok",...}
 ```
 
 ---
@@ -246,15 +234,13 @@ curl http://YOUR_IP:13777/api/health
      │  [Ключ удаляется из Redis]           │
 ```
 
-- Ключ одноразовый, хранится в Redis с TTL (по умолчанию 10 мин)
-- После использования ключ мгновенно инвалидируется
+- Ключ **одноразовый**, хранится в Redis с TTL (по умолчанию 10 мин)
+- После использования мгновенно инвалидируется
 - Модератор получает JWT с ролью `moderator`
 
 ---
 
 ## OBS Browser Source
-
-URL для добавления в OBS:
 
 ```
 http://YOUR_IP:13777/obs
@@ -267,19 +253,19 @@ Overlay обновляется в реальном времени через Web
 ## Разработка (без Docker)
 
 ```bash
-# 1. Redis (нужен локальный)
+# 1. Redis
 docker run -d -p 6379:6379 redis:7-alpine
 
-# 2. Серверная часть
+# 2. Сервер
 cd server
-cp ../.env.example .env  # отредактировать REDIS_HOST=localhost
+cp ../.env.example .env   # REDIS_HOST=localhost
 npm install
-npm run dev              # порт 3001
+npm run dev               # порт 3001
 
 # 3. Клиент (другой терминал)
 cd client
 npm install
-npm run dev              # порт 5173, proxy → localhost:3001
+npm run dev               # порт 5173, proxy → localhost:3001
 ```
 
 ---
@@ -288,28 +274,29 @@ npm run dev              # порт 5173, proxy → localhost:3001
 
 ```
 stream-overlay/
-├── install.sh                  # ← CLI установщик / панель управления
+├── install.sh                  # CLI установщик / панель управления
 ├── docker-compose.yml
 ├── .env.example
 │
 ├── server/                     # WebRTC Node (Node.js 22 + mediasoup)
 │   ├── Dockerfile
+│   ├── package-lock.json       # зафиксированные зависимости (npm ci)
 │   └── src/
-│       ├── index.js            # HTTP + graceful shutdown
-│       ├── config.js           # Все настройки из env
+│       ├── index.js
+│       ├── config.js
 │       ├── api/
-│       │   ├── routes.js       # /health, /system-info
+│       │   ├── routes.js           # /health (public), /system-info (auth)
 │       │   ├── auth-routes.js
 │       │   ├── media-routes.js
-│       │   └── webrtc-routes.js
+│       │   └── webrtc-routes.js    # /ice-servers, /stats, /room-stats
 │       ├── auth/
-│       │   ├── keys.js         # Одноразовые ключи (Redis SCAN)
-│       │   └── middleware.js
+│       │   ├── keys.js             # одноразовые ключи (Redis SCAN + TTL)
+│       │   └── middleware.js       # JWT + строгая проверка origin
 │       ├── webrtc/
-│       │   ├── mediasoup-config.js  # TCP fallback, 2Mbps start bitrate
-│       │   └── room.js         # Workers + exponential backoff
+│       │   ├── mediasoup-config.js
+│       │   └── room.js             # workers + router null-check + setMaxBitrate
 │       ├── ws/
-│       │   └── socket.js       # Namespace /  + /overlay (OBS)
+│       │   └── socket.js           # / + /overlay (OBS), валидация volume
 │       └── utils/
 │           ├── logger.js
 │           ├── redis.js
@@ -318,23 +305,21 @@ stream-overlay/
 ├── client/                     # Dock Panel (React 18 + Vite + Tailwind)
 │   ├── Dockerfile
 │   └── src/
+│       ├── lib/
+│       │   ├── socket.js           # singleton с токен-инвалидацией
+│       │   └── webrtc.js           # _request() с 15s timeout
 │       ├── hooks/
-│       │   ├── useWebRTC.js    # RTCStatsReport (fps/bitrate/latency)
-│       │   ├── useSocket.js
+│       │   ├── useWebRTC.js
+│       │   ├── useSocket.js        # cleanup: socket.off в return
 │       │   └── useAuth.jsx
 │       ├── components/
-│       │   ├── stream/         # ConnectionStatus, PerformanceDashboard
-│       │   ├── media/          # Overlays, MediaPanel
-│       │   └── layout/         # Sidebar (Monitoring tab)
 │       └── pages/
-│           ├── DockPanel.jsx
-│           └── ObsOverlay.jsx
 │
 ├── nginx/
-│   └── nginx.conf              # upstream :3001, timeout 3600s
+│   └── nginx.conf
 │
 └── coturn/
-    └── turnserver.conf         # TURN auth, SSRF protection
+    └── turnserver.conf
 ```
 
 ---
@@ -347,12 +332,12 @@ stream-overlay/
 | Одноразовые ключи | Redis + TTL, инвалидируются после использования |
 | Role-based access | `streamer` / `moderator` на control-события |
 | CORS strict | Точное совпадение Origin (не `startsWith`) |
-| Rate Limiting | API / auth / upload — по окнам |
+| Rate Limiting | API / auth / upload |
 | Helmet | HTTP security headers |
-| SSRF защита | Валидация внешних URL |
-| MIME validation | Разрешённые типы для загрузок |
-| Path Traversal | Защита медиахранилища |
-| Redis localhost | Только `127.0.0.1:6379` снаружи |
+| `.env` chmod 600 | Пароли недоступны другим пользователям системы |
+| `/system-info` auth | Эндпоинт с heap/PID требует JWT |
+| OBS namespace | Headless-клиенты (без origin) разрешены только в `/overlay` |
+| Redis localhost | `127.0.0.1:6379` снаружи, внутри Docker — через сеть |
 | TURN auth | Обязательная аутентификация, без анонимного доступа |
 | Graceful shutdown | Force-exit через 10 с |
 
@@ -367,19 +352,22 @@ stream-overlay/
 - [x] OBS overlay namespace (публичный WebSocket)
 - [x] Статистика в реальном времени (fps, bitrate, latency, packet loss)
 - [x] Мониторинг сервера (память, аптайм, пиры)
-- [x] ConnectionStatus виджет
 - [x] Exponential backoff для mediasoup workers
-- [x] Docker healthchecks
 
 ### Медиа
 - [x] Overlay-изображения, GIF, видео
 - [x] Загрузка медиафайлов
-- [x] Виртуальная медиаматрица
 - [x] Управление громкостью
 
 ### Ops
-- [x] CLI установщик с мастером настройки
+- [x] CLI установщик с мастером настройки (OwO)
+- [x] Выбор режима Redis: Docker или системный (нет конфликта портов)
 - [x] Автогенерация паролей
+- [x] Healthcheck-polling после `compose up`
+- [x] Проверка firewall (ufw/iptables) после деплоя
+- [x] Вывод доступов сразу после установки
+- [x] Ротация логов Docker (50 МБ × 5 файлов)
+- [x] `chmod 600 .env` при каждой записи
 - [x] Резервное копирование `.env`
 - [x] BuildKit кэши (быстрая пересборка)
 - [x] `MAKEFLAGS="-j$(nproc)"` — параллельная сборка mediasoup

@@ -36,12 +36,16 @@ COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yml"
 banner() {
   echo -e "${BMGN}"
   cat << 'EOF'
+                                                       /\   /\
+                                                      ( OwO )
+                                                       )   (   )~
   ████████╗ ██████╗  ██████╗ ███╗   ██╗      ██████╗  ██████╗ ██╗  ██╗
      ██╔══╝██╔═══██╗██╔═══██╗████╗  ██║      ██╔══██╗██╔═══██╗██║ ██╔╝
      ██║   ██║   ██║██║   ██║██╔██╗ ██║█████╗██║  ██║██║   ██║█████╔╝
      ██║   ██║   ██║██║   ██║██║╚██╗██║╚════╝██║  ██║██║   ██║██╔═██╗
      ██║   ╚██████╔╝╚██████╔╝██║ ╚████║      ██████╔╝╚██████╔╝██║  ██╗
      ╚═╝    ╚═════╝  ╚═════╝ ╚═╝  ╚═══╝      ╚═════╝  ╚═════╝ ╚═╝  ╚═╝
+                                                               ~~~~w~~
 EOF
   echo -e "${RESET}"
   echo -e "  ${BCYN}OnionRP Streaming Tool${RESET}  ${DIM}WebRTC · mediasoup SFU · OBS Overlay${RESET}"
@@ -109,12 +113,17 @@ check_deps() {
 
 # ────────────────────────────────────────────────────────────
 # compose wrapper — всегда с project-directory
+# При REDIS_MODE=docker автоматически добавляет --profile docker-redis
 # ────────────────────────────────────────────────────────────
 compose() {
+  local extra_args=()
+  if [[ "$(env_get REDIS_MODE)" == "docker" ]]; then
+    extra_args=(--profile docker-redis)
+  fi
   if docker compose version &>/dev/null 2>&1; then
-    docker compose --project-directory "$SCRIPT_DIR" -f "$COMPOSE_FILE" "$@"
+    docker compose --project-directory "$SCRIPT_DIR" -f "$COMPOSE_FILE" "${extra_args[@]}" "$@"
   else
-    docker-compose --project-directory "$SCRIPT_DIR" -f "$COMPOSE_FILE" "$@"
+    docker-compose --project-directory "$SCRIPT_DIR" -f "$COMPOSE_FILE" "${extra_args[@]}" "$@"
   fi
 }
 
@@ -168,7 +177,7 @@ env_set() {
 }
 
 # ────────────────────────────────────────────────────────────
-# Ссылки на сервисы
+# Ссылки и доступы после запуска
 # ────────────────────────────────────────────────────────────
 print_links() {
   local port pub_ip
@@ -176,10 +185,83 @@ print_links() {
   pub_ip=$(env_get MEDIASOUP_ANNOUNCED_IP); pub_ip="${pub_ip:-localhost}"
   hr; blank
   echo -e "  ${WHT}Ссылки:${RESET}"
-  echo -e "  ${BBLU}>>  Dock-панель  ${BCYN}http://${pub_ip}:${port}${RESET}"
-  echo -e "  ${BBLU}>>  API health   ${BCYN}http://${pub_ip}:${port}/api/health${RESET}"
-  echo -e "  ${BBLU}>>  OBS overlay  ${BCYN}http://${pub_ip}:${port}/obs${RESET}"
+  echo -e "  ${BBLU}  Dock-панель  ${BCYN}http://${pub_ip}:${port}${RESET}"
+  echo -e "  ${BBLU}  API health   ${BCYN}http://${pub_ip}:${port}/api/health${RESET}"
+  echo -e "  ${BBLU}  OBS overlay  ${BCYN}http://${pub_ip}:${port}/obs${RESET}"
   blank
+
+  # Показываем пароль стримера, если .env существует
+  local sp; sp=$(env_get STREAMER_PASSWORD)
+  local rm; rm=$(env_get REDIS_MODE); rm="${rm:-docker}"
+  if [[ -n "$sp" ]]; then
+    echo -e "  ${WHT}Доступы:${RESET}"
+    echo -e "  ${DIM}  Пароль стримера   ${RESET}${BYLW}${sp}${RESET}"
+    echo -e "  ${DIM}  Режим Redis        ${RESET}${BYLW}${rm}${RESET}"
+    echo -e "  ${DIM}  Остальное          ${RESET}${DIM}→ cat ${ENV_FILE}${RESET}"
+    blank
+  fi
+}
+
+# ────────────────────────────────────────────────────────────
+# Ожидание готовности API (polling /api/health)
+# ────────────────────────────────────────────────────────────
+wait_healthy() {
+  local port pub_ip
+  port=$(env_get WEB_PORT); port="${port:-13777}"
+  pub_ip=$(env_get MEDIASOUP_ANNOUNCED_IP); pub_ip="${pub_ip:-localhost}"
+  local url="http://127.0.0.1:${port}/api/health"
+
+  info "Ожидание готовности сервера..."
+  local elapsed=0 dot_count=0
+  printf "  " >/dev/tty
+  while [[ $elapsed -lt 90 ]]; do
+    if curl -sf --max-time 2 "$url" &>/dev/null; then
+      printf "\n" >/dev/tty
+      ok "Сервис отвечает — готов к работе"; blank
+      return 0
+    fi
+    printf "." >/dev/tty
+    sleep 3
+    (( elapsed += 3, dot_count += 1 ))
+    # Новая строка каждые 20 точек
+    [[ $(( dot_count % 20 )) -eq 0 ]] && printf "\n  " >/dev/tty
+  done
+  printf "\n" >/dev/tty
+  warn "Сервер не ответил за 90 секунд — проверьте логи (п.4)"
+  return 1
+}
+
+# ────────────────────────────────────────────────────────────
+# Проверка firewall для WebRTC UDP портов
+# ────────────────────────────────────────────────────────────
+check_firewall() {
+  local min_port max_port
+  min_port=$(env_get MEDIASOUP_MIN_PORT); min_port="${min_port:-40000}"
+  max_port=$(env_get MEDIASOUP_MAX_PORT); max_port="${max_port:-49999}"
+
+  # ufw
+  if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "^Status: active"; then
+    if ! ufw status 2>/dev/null | grep -qE "${min_port}[:/]|${min_port}:${max_port}"; then
+      blank
+      warn "ufw активен, но UDP ${min_port}:${max_port} не открыты!"
+      echo -e "  ${DIM}Выполните:  ufw allow ${min_port}:${max_port}/udp${RESET}"
+      blank
+    fi
+    return
+  fi
+
+  # iptables (только если ufw не активен)
+  if command -v iptables &>/dev/null; then
+    local rules; rules=$(iptables -L INPUT -n 2>/dev/null || true)
+    if echo "$rules" | grep -q "DROP\|REJECT" && \
+       ! echo "$rules" | grep -qE "dpt:${min_port}|dpts:${min_port}"; then
+      blank
+      warn "iptables DROP обнаружен, UDP ${min_port}:${max_port} могут быть заблокированы"
+      echo -e "  ${DIM}Если стрим не работает, откройте порты вручную:${RESET}"
+      echo -e "  ${DIM}  iptables -A INPUT -p udp --dport ${min_port}:${max_port} -j ACCEPT${RESET}"
+      blank
+    fi
+  fi
 }
 
 # ────────────────────────────────────────────────────────────
@@ -220,11 +302,69 @@ run_wizard() {
   cors_origin=$(read_val "CORS Origin" "http://${pub_ip}:${web_port}")
   blank
 
+  # ─── Redis ──────────────────────────────────────────────
+  echo -e "  ${BBLU}--  Redis  --------------------------------------${RESET}"
+  blank
+
+  local redis_mode redis_host redis_port
+  # Проверяем, занят ли порт 6379 системным Redis
+  local redis_running=false
+  if ss -lptn 2>/dev/null | grep -q ':6379 ' || \
+     nc -z 127.0.0.1 6379 2>/dev/null; then
+    redis_running=true
+  fi
+
+  local saved_mode; saved_mode=$(env_get REDIS_MODE)
+
+  if [[ "$redis_running" == "true" ]]; then
+    echo -e "  ${YLW}!  На сервере уже запущен Redis (порт 6379 занят).${RESET}"
+    blank
+    echo -e "  ${DIM}[1] Использовать системный Redis (рекомендуется)${RESET}"
+    echo -e "  ${DIM}[2] Запустить Redis в Docker  (потребует остановки системного)${RESET}"
+    blank
+    echo -ne "  ${WHT}Выбор [${saved_mode:-1}]: ${RESET}" >/dev/tty
+    local redis_choice; read -r redis_choice </dev/tty || true
+    redis_choice="${redis_choice:-${saved_mode:-1}}"
+  else
+    echo -e "  ${DIM}[1] Запустить Redis в Docker  (рекомендуется)${RESET}"
+    echo -e "  ${DIM}[2] Использовать внешний Redis (укажите хост)${RESET}"
+    blank
+    echo -ne "  ${WHT}Выбор [${saved_mode:-1}]: ${RESET}" >/dev/tty
+    local redis_choice; read -r redis_choice </dev/tty || true
+    # При обнаруженном системном Redis по умолчанию 1=external; без Redis 1=docker
+    if [[ "$redis_running" == "true" ]]; then
+      redis_choice="${redis_choice:-${saved_mode:-1}}"
+    else
+      redis_choice="${redis_choice:-${saved_mode:-1}}"
+    fi
+  fi
+  blank
+
+  if { [[ "$redis_running" == "true" ]] && [[ "$redis_choice" == "1" ]]; } || \
+     { [[ "$redis_running" == "false" ]] && [[ "$redis_choice" == "2" ]]; }; then
+    # Внешний Redis
+    redis_mode="external"
+    local _rh; _rh=$(env_get REDIS_HOST)
+    [[ "$_rh" == "redis" || -z "$_rh" ]] && _rh="127.0.0.1"
+    redis_host=$(read_val "Redis host" "$_rh")
+    redis_port=$(read_val "Redis port" "$(env_get REDIS_PORT || echo 6379)")
+    blank
+  else
+    # Docker Redis
+    redis_mode="docker"
+    redis_host="redis"
+    redis_port="6379"
+  fi
+
   # ─── Пароли ─────────────────────────────────────────────
   echo -e "  ${BBLU}--  Пароли (пусто = автогенерация)  ------------${RESET}"
   blank
 
   local redis_pw
+  if [[ "$redis_mode" == "external" ]]; then
+    echo -e "  ${DIM}Для внешнего Redis укажите его текущий пароль (пусто = без пароля).${RESET}"
+    blank
+  fi
   redis_pw=$(read_pass "Redis password" "$(env_get REDIS_PASSWORD)")
   if [[ -z "$redis_pw" ]]; then
     redis_pw=$(gen_pass 24)
@@ -267,6 +407,9 @@ run_wizard() {
   # ─── TURN ───────────────────────────────────────────────
   echo -e "  ${BBLU}--  TURN / coturn  ------------------------------${RESET}"
   blank
+  echo -e "  ${DIM}TURN используется WebRTC для обхода NAT/firewall клиентов.${RESET}"
+  echo -e "  ${DIM}Username/realm — учётные данные встроенного coturn-сервера.${RESET}"
+  blank
 
   local _tu; _tu=$(env_get TURN_SERVER_USERNAME); _tu="${_tu:-onionrp}"
   local turn_user turn_realm
@@ -286,8 +429,17 @@ run_wizard() {
   env_set MEDIASOUP_MIN_PORT      "$min_port"
   env_set MEDIASOUP_MAX_PORT      "$max_port"
   env_set MEDIASOUP_LOG_LEVEL     "warn"
-  env_set REDIS_HOST              "redis"
-  env_set REDIS_PORT              "6379"
+  env_set REDIS_MODE              "$redis_mode"
+  # Внешний Redis: контейнер обращается к хосту через host.docker.internal
+  if [[ "$redis_mode" == "external" ]]; then
+    local docker_redis_host="$redis_host"
+    [[ "$redis_host" == "127.0.0.1" || "$redis_host" == "localhost" ]] && \
+      docker_redis_host="host.docker.internal"
+    env_set REDIS_HOST            "$docker_redis_host"
+  else
+    env_set REDIS_HOST            "redis"
+  fi
+  env_set REDIS_PORT              "$redis_port"
   env_set REDIS_PASSWORD          "$redis_pw"
   env_set JWT_SECRET              "$jwt_secret"
   env_set JWT_EXPIRES_IN          "24h"
@@ -315,7 +467,10 @@ run_wizard() {
     ok "coturn/turnserver.conf обновлён"
   fi
 
-  blank; ok "${BGRN}.env успешно сохранён${RESET}"; blank
+  # Ограничиваем доступ к .env (пароли, JWT secret)
+  chmod 600 "$ENV_FILE" 2>/dev/null || true
+
+  blank; ok "${BGRN}.env успешно сохранён${RESET}  ${DIM}(chmod 600)${RESET}"; blank
 
   printf "  ${WHT}Собрать и запустить контейнеры сейчас? [y/N]: ${RESET}" >/dev/tty
   local do_build=""
@@ -332,12 +487,19 @@ run_wizard() {
 build_and_start() {
   blank; hr
   info "Сборка контейнеров (BuildKit)..."
-  DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 \
-    compose build --progress=plain 2>&1 | tail -40
+  echo -e "  ${DIM}(первая сборка занимает 3–10 минут из-за компиляции нативных модулей)${RESET}"
+  blank
+  if ! DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 \
+       compose build --progress=plain 2>&1; then
+    err "Сборка завершилась с ошибкой. Проверьте вывод выше."
+    return 1
+  fi
   blank
   info "Запуск сервисов..."
   compose up -d
   blank
+  check_firewall
+  wait_healthy || true
   print_links
 }
 
@@ -487,17 +649,40 @@ do_update() {
   echo -e "  ${BCYN}>>  Обновление${RESET}"; blank
 
   if ! command -v git &>/dev/null; then
-    warn "git не найден"
+    warn "git не найден — обновление через git невозможно"
     pause; return
   fi
 
+  info "Проверка новых коммитов..."
+  git -C "$SCRIPT_DIR" fetch origin 2>&1 || {
+    warn "Не удалось подключиться к git remote"
+    pause; return
+  }
+
+  local branch; branch=$(git -C "$SCRIPT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+  local ahead_behind; ahead_behind=$(git -C "$SCRIPT_DIR" rev-list --left-right --count "HEAD...origin/${branch}" 2>/dev/null || echo "0	0")
+  local behind; behind=$(echo "$ahead_behind" | awk '{print $2}')
+
+  if [[ "$behind" == "0" ]]; then
+    ok "Уже актуальная версия — обновление не требуется"
+    pause; return
+  fi
+
+  blank
+  echo -e "  ${DIM}Новые коммиты (${behind}):${RESET}"
+  git -C "$SCRIPT_DIR" log --oneline "HEAD..origin/${branch}" 2>/dev/null | \
+    while IFS= read -r line; do echo -e "  ${DIM}  ${line}${RESET}"; done
+  blank
+
   info "Остановка сервисов..."
   compose stop || true
+
   info "git pull..."
-  git -C "$SCRIPT_DIR" pull --ff-only || {
-    warn "git pull не удался — обновите вручную"
+  git -C "$SCRIPT_DIR" pull --ff-only origin "$branch" || {
+    warn "git pull не удался — конфликт изменений. Обновите вручную."
     compose start || true; pause; return
   }
+
   build_and_start
   ok "Обновление завершено"; pause
 }
@@ -649,7 +834,8 @@ main() {
     restart)   compose restart ;;
     build)     build_and_start ;;
     status)    show_status ;;
-    logs)      compose logs -f --tail=100 "${2:-webrtc-node}" ;;
+    logs)      [[ -n "${2:-}" ]] && compose logs -f --tail=100 "$2" \
+                                  || compose logs -f --tail=50 ;;
     update)    do_update ;;
     uninstall) do_uninstall ;;
     "")
