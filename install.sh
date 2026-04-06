@@ -64,9 +64,11 @@ pause() {
 # ────────────────────────────────────────────────────────────
 read_val() {
   local prompt="$1" default="${2:-}"
-  local hint=""
-  [[ -n "$default" ]] && hint=" ${DIM}[${default}]${RESET}"
-  printf "  ${WHT}%s%s: ${RESET}" "$prompt" "$hint" >/dev/tty
+  if [[ -n "$default" ]]; then
+    echo -ne "  ${WHT}${prompt} [${default}]: ${RESET}" >/dev/tty
+  else
+    echo -ne "  ${WHT}${prompt}: ${RESET}" >/dev/tty
+  fi
   local val=""
   read -r val </dev/tty || true
   printf '%s' "${val:-$default}"
@@ -74,9 +76,11 @@ read_val() {
 
 read_pass() {
   local prompt="$1" default="${2:-}"
-  local hint=""
-  [[ -n "$default" ]] && hint=" ${DIM}[оставить текущий]${RESET}"
-  printf "  ${WHT}%s%s: ${RESET}" "$prompt" "$hint" >/dev/tty
+  if [[ -n "$default" ]]; then
+    echo -ne "  ${WHT}${prompt} [сохранить]: ${RESET}" >/dev/tty
+  else
+    echo -ne "  ${WHT}${prompt}: ${RESET}" >/dev/tty
+  fi
   local val=""
   read -rs val </dev/tty || true
   printf '\n' >/dev/tty
