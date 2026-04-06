@@ -16,13 +16,13 @@ WHT='\033[1;37m';  DIM='\033[2m'
 RESET='\033[0m'
 
 # ── Утилиты вывода ───────────────────────────────────────────
-info()    { echo -e "${BLU}  ℹ${RESET}  $*"; }
-ok()      { echo -e "${BGRN}  ✓${RESET}  $*"; }
-warn()    { echo -e "${BYLW}  ⚠${RESET}  $*"; }
-err()     { echo -e "${BRED}  ✗${RESET}  $*" >&2; }
-die()     { err "$*"; exit 1; }
-hr()      { echo -e "${DIM}$(printf '─%.0s' {1..60})${RESET}"; }
-blank()   { echo ""; }
+info()  { echo -e "${BLU}  i${RESET}  $*"; }
+ok()    { echo -e "${BGRN}  v${RESET}  $*"; }
+warn()  { echo -e "${BYLW}  !${RESET}  $*"; }
+err()   { echo -e "${BRED}  x${RESET}  $*" >&2; }
+die()   { err "$*"; exit 1; }
+hr()    { echo -e "${DIM}────────────────────────────────────────────────────────────${RESET}"; }
+blank() { echo ""; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${SCRIPT_DIR}/.env"
@@ -30,8 +30,10 @@ ENV_EXAMPLE="${SCRIPT_DIR}/.env.example"
 COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yml"
 
 # ────────────────────────────────────────────────────────────
+# banner — НЕ очищает экран (данные остаются видны)
+# Для полной очистки вызывай: clear; banner
+# ────────────────────────────────────────────────────────────
 banner() {
-  clear
   echo -e "${BMGN}"
   cat << 'EOF'
   ████████╗ ██████╗  ██████╗ ███╗   ██╗      ██████╗  ██████╗ ██╗  ██╗
@@ -44,9 +46,45 @@ EOF
   echo -e "${RESET}"
   echo -e "  ${BCYN}OnionRP Streaming Tool${RESET}  ${DIM}WebRTC · mediasoup SFU · OBS Overlay${RESET}"
   echo -e "  ${DIM}https://github.com/Anch0vu/stream-overlay${RESET}"
-  blank
-  hr
-  blank
+  blank; hr; blank
+}
+
+# ────────────────────────────────────────────────────────────
+# pause — пишет в /dev/tty, не в stdout
+# ────────────────────────────────────────────────────────────
+pause() {
+  printf "  ${DIM}[ Нажмите Enter для продолжения ]${RESET}" >/dev/tty
+  read -r </dev/tty || true
+}
+
+# ────────────────────────────────────────────────────────────
+# Интерактивный ввод
+# КЛЮЧЕВОЙ ФИКСинт: промпт → /dev/tty, читаем из /dev/tty
+# Это позволяет вызывать VAR=$(read_val ...) без потери промпта
+# ────────────────────────────────────────────────────────────
+read_val() {
+  local prompt="$1" default="${2:-}"
+  if [[ -n "$default" ]]; then
+    echo -ne "  ${WHT}${prompt} [${default}]: ${RESET}" >/dev/tty
+  else
+    echo -ne "  ${WHT}${prompt}: ${RESET}" >/dev/tty
+  fi
+  local val=""
+  read -r val </dev/tty || true
+  printf '%s' "${val:-$default}"
+}
+
+read_pass() {
+  local prompt="$1" default="${2:-}"
+  if [[ -n "$default" ]]; then
+    echo -ne "  ${WHT}${prompt} [сохранить]: ${RESET}" >/dev/tty
+  else
+    echo -ne "  ${WHT}${prompt}: ${RESET}" >/dev/tty
+  fi
+  local val=""
+  read -rs val </dev/tty || true
+  printf '\n' >/dev/tty
+  printf '%s' "${val:-$default}"
 }
 
 # ────────────────────────────────────────────────────────────
@@ -54,16 +92,13 @@ EOF
 # ────────────────────────────────────────────────────────────
 check_deps() {
   local missing=()
-  for cmd in docker curl openssl; do
+  for cmd in docker curl openssl awk; do
     command -v "$cmd" &>/dev/null || missing+=("$cmd")
   done
-
-  # docker compose v2 (плагин) или docker-compose v1
   if ! docker compose version &>/dev/null 2>&1 && \
      ! command -v docker-compose &>/dev/null; then
     missing+=("docker-compose")
   fi
-
   if [[ ${#missing[@]} -gt 0 ]]; then
     err "Не найдены: ${missing[*]}"
     info "Установить Docker: https://docs.docker.com/engine/install/ubuntu/"
@@ -72,20 +107,26 @@ check_deps() {
   return 0
 }
 
+# ────────────────────────────────────────────────────────────
+# compose wrapper — всегда с project-directory
+# ────────────────────────────────────────────────────────────
 compose() {
   if docker compose version &>/dev/null 2>&1; then
-    docker compose -f "$COMPOSE_FILE" "$@"
+    docker compose --project-directory "$SCRIPT_DIR" -f "$COMPOSE_FILE" "$@"
   else
-    docker-compose -f "$COMPOSE_FILE" "$@"
+    docker-compose --project-directory "$SCRIPT_DIR" -f "$COMPOSE_FILE" "$@"
   fi
 }
 
 # ────────────────────────────────────────────────────────────
-# Генерация случайного пароля
+# Генерация паролей
+# Charset: только символы безопасные для sed и shell
+# Исключены: & | \ ! ` $ ( ) < > ; ' "
 # ────────────────────────────────────────────────────────────
 gen_pass() {
-  local len=${1:-32}
-  openssl rand -base64 48 | tr -dc 'a-zA-Z0-9!@#%^&*_-' | head -c "$len"
+  local len="${1:-32}"
+  openssl rand -base64 64 | tr -dc 'a-zA-Z0-9@#%^*_+=-' | head -c "$len"
+  echo ""
 }
 
 gen_secret() {
@@ -97,194 +138,226 @@ gen_secret() {
 # ────────────────────────────────────────────────────────────
 detect_public_ip() {
   local ip=""
-  ip=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null) || \
-  ip=$(curl -s --max-time 5 https://ifconfig.me 2>/dev/null) || \
-  ip=$(curl -s --max-time 5 https://ipecho.net/plain 2>/dev/null) || true
-  echo "${ip:-}"
+  ip=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null) \
+    || ip=$(curl -s --max-time 5 https://ifconfig.me 2>/dev/null) \
+    || ip=$(curl -s --max-time 5 https://ipecho.net/plain 2>/dev/null) \
+    || true
+  printf '%s' "${ip:-}"
 }
 
 # ────────────────────────────────────────────────────────────
-# Чтение значения из .env
+# .env helpers
 # ────────────────────────────────────────────────────────────
 env_get() {
   local key="$1"
-  [[ -f "$ENV_FILE" ]] || { echo ""; return; }
-  grep -E "^${key}=" "$ENV_FILE" | head -1 | cut -d= -f2- | tr -d '"'
+  [[ -f "$ENV_FILE" ]] || { printf ''; return 0; }
+  grep -E "^${key}=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' || true
 }
 
-# Запись / обновление значения в .env
+# Безопасная запись в .env через awk (нет проблем со спецсимволами)
 env_set() {
   local key="$1" val="$2"
   if grep -qE "^${key}=" "$ENV_FILE" 2>/dev/null; then
-    sed -i "s|^${key}=.*|${key}=${val}|" "$ENV_FILE"
+    # awk безопасно заменяет строку, не зависит от спецсимволов в val
+    awk -v k="$key" -v v="$val" \
+      'BEGIN{FS="="; OFS="="} $1==k{$0=k"="v} 1' \
+      "$ENV_FILE" > "${ENV_FILE}.tmp" && mv "${ENV_FILE}.tmp" "$ENV_FILE"
   else
-    echo "${key}=${val}" >> "$ENV_FILE"
+    printf '%s=%s\n' "$key" "$val" >> "$ENV_FILE"
   fi
 }
 
 # ────────────────────────────────────────────────────────────
-# Интерактивный ввод с подсказкой
-# read_val PROMPT DEFAULT VARNAME
+# Ссылки на сервисы
 # ────────────────────────────────────────────────────────────
-read_val() {
-  local prompt="$1" default="$2"
-  local hint=""
-  [[ -n "$default" ]] && hint=" ${DIM}[${default}]${RESET}"
-  echo -ne "  ${WHT}${prompt}${hint}: ${RESET}"
-  read -r val
-  echo "${val:-$default}"
-}
-
-read_pass() {
-  local prompt="$1" default="$2"
-  local hint=""
-  [[ -n "$default" ]] && hint=" ${DIM}[оставить текущий]${RESET}"
-  echo -ne "  ${WHT}${prompt}${hint}: ${RESET}"
-  read -rs val
-  echo ""
-  echo "${val:-$default}"
+print_links() {
+  local port pub_ip
+  port=$(env_get WEB_PORT); port="${port:-13777}"
+  pub_ip=$(env_get MEDIASOUP_ANNOUNCED_IP); pub_ip="${pub_ip:-localhost}"
+  hr; blank
+  echo -e "  ${WHT}Ссылки:${RESET}"
+  echo -e "  ${BBLU}>>  Dock-панель  ${BCYN}http://${pub_ip}:${port}${RESET}"
+  echo -e "  ${BBLU}>>  API health   ${BCYN}http://${pub_ip}:${port}/api/health${RESET}"
+  echo -e "  ${BBLU}>>  OBS overlay  ${BCYN}http://${pub_ip}:${port}/obs${RESET}"
+  blank
 }
 
 # ────────────────────────────────────────────────────────────
 # Мастер конфигурации
 # ────────────────────────────────────────────────────────────
 run_wizard() {
-  banner
-  echo -e "  ${BCYN}⚙  Мастер первоначальной настройки${RESET}"
+  clear; banner
+  echo -e "  ${BCYN}>>  Мастер первоначальной настройки${RESET}"
   blank
+
   info "Определяем публичный IP..."
   local auto_ip
   auto_ip=$(detect_public_ip)
-  [[ -n "$auto_ip" ]] && ok "Обнаружен IP: ${BYLW}${auto_ip}${RESET}" || warn "Не удалось определить IP автоматически"
+  if [[ -n "$auto_ip" ]]; then
+    ok "Обнаружен IP: ${BYLW}${auto_ip}${RESET}"
+  else
+    warn "Не удалось определить IP автоматически"
+    auto_ip="YOUR_PUBLIC_IP"
+  fi
   blank
 
-  # Создать .env из примера если нет
   [[ -f "$ENV_FILE" ]] || cp "$ENV_EXAMPLE" "$ENV_FILE"
 
-  echo -e "  ${BBLU}━━  Сеть  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-  local pub_ip web_port cors_origin
-  pub_ip=$(read_val   "Публичный IP сервера"          "${auto_ip:-YOUR_PUBLIC_IP}")
-  web_port=$(read_val "Внешний порт веб-панели"       "$(env_get WEB_PORT || echo 13777)")
-  cors_origin=$(read_val "CORS Origin (протокол+хост:порт)" "http://${pub_ip}:${web_port}")
+  # ─── Сеть ───────────────────────────────────────────────
+  echo -e "  ${BBLU}--  Сеть  ---------------------------------------${RESET}"
   blank
 
-  echo -e "  ${BBLU}━━  Пароли  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-  info "Пустой ввод = автогенерация нового пароля"
-  local redis_pw jwt_secret streamer_pw turn_pw
-  redis_pw=$(read_pass   "Redis password"          "$(env_get REDIS_PASSWORD)")
-  [[ -z "$redis_pw" ]] && redis_pw=$(gen_pass 24) && info "Redis: ${DIM}${redis_pw}${RESET}"
-  jwt_secret=$(read_pass "JWT secret (≥32 символа)" "$(env_get JWT_SECRET)")
-  [[ -z "$jwt_secret" ]] && jwt_secret=$(gen_secret) && info "JWT:   ${DIM}${jwt_secret}${RESET}"
-  streamer_pw=$(read_pass "Пароль стримера"         "$(env_get STREAMER_PASSWORD)")
-  [[ -z "$streamer_pw" ]] && streamer_pw=$(gen_pass 20) && info "Strmr: ${DIM}${streamer_pw}${RESET}"
-  turn_pw=$(read_pass    "TURN пароль"              "$(env_get TURN_SERVER_PASSWORD)")
-  [[ -z "$turn_pw" ]] && turn_pw=$(gen_pass 20) && info "TURN:  ${DIM}${turn_pw}${RESET}"
+  local pub_ip
+  pub_ip=$(read_val "Публичный IP сервера" "$auto_ip")
   blank
 
-  echo -e "  ${BBLU}━━  mediasoup / WebRTC  ━━━━━━━━━━━━━━━━━━━${RESET}"
+  local web_port
+  local _wp; _wp=$(env_get WEB_PORT); _wp="${_wp:-13777}"
+  web_port=$(read_val "Внешний порт веб-панели" "$_wp")
+  blank
+
+  local cors_origin
+  cors_origin=$(read_val "CORS Origin" "http://${pub_ip}:${web_port}")
+  blank
+
+  # ─── Пароли ─────────────────────────────────────────────
+  echo -e "  ${BBLU}--  Пароли (пусто = автогенерация)  ------------${RESET}"
+  blank
+
+  local redis_pw
+  redis_pw=$(read_pass "Redis password" "$(env_get REDIS_PASSWORD)")
+  if [[ -z "$redis_pw" ]]; then
+    redis_pw=$(gen_pass 24)
+    info "Redis: ${DIM}${redis_pw}${RESET}"
+  fi
+
+  local jwt_secret
+  jwt_secret=$(read_pass "JWT secret (>=32 символа)" "$(env_get JWT_SECRET)")
+  if [[ -z "$jwt_secret" ]]; then
+    jwt_secret=$(gen_secret)
+    info "JWT:   ${DIM}${jwt_secret}${RESET}"
+  fi
+
+  local streamer_pw
+  streamer_pw=$(read_pass "Пароль стримера" "$(env_get STREAMER_PASSWORD)")
+  if [[ -z "$streamer_pw" ]]; then
+    streamer_pw=$(gen_pass 20)
+    info "Strmr: ${DIM}${streamer_pw}${RESET}"
+  fi
+
+  local turn_pw
+  turn_pw=$(read_pass "TURN пароль" "$(env_get TURN_SERVER_PASSWORD)")
+  if [[ -z "$turn_pw" ]]; then
+    turn_pw=$(gen_pass 20)
+    info "TURN:  ${DIM}${turn_pw}${RESET}"
+  fi
+  blank
+
+  # ─── WebRTC порты ───────────────────────────────────────
+  echo -e "  ${BBLU}--  WebRTC порты  --------------------------------${RESET}"
+  blank
+
+  local _mn; _mn=$(env_get MEDIASOUP_MIN_PORT); _mn="${_mn:-40000}"
+  local _mx; _mx=$(env_get MEDIASOUP_MAX_PORT); _mx="${_mx:-49999}"
   local min_port max_port
-  min_port=$(read_val "UDP мин. порт" "$(env_get MEDIASOUP_MIN_PORT || echo 40000)")
-  max_port=$(read_val "UDP макс. порт" "$(env_get MEDIASOUP_MAX_PORT || echo 49999)")
+  min_port=$(read_val "UDP мин. порт" "$_mn")
+  max_port=$(read_val "UDP макс. порт" "$_mx")
   blank
 
-  echo -e "  ${BBLU}━━  TURN / coturn  ━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+  # ─── TURN ───────────────────────────────────────────────
+  echo -e "  ${BBLU}--  TURN / coturn  ------------------------------${RESET}"
+  blank
+
+  local _tu; _tu=$(env_get TURN_SERVER_USERNAME); _tu="${_tu:-onionrp}"
   local turn_user turn_realm
-  turn_user=$(read_val  "TURN username"  "$(env_get TURN_SERVER_USERNAME || echo onionrp)")
-  turn_realm=$(read_val "TURN realm"     "onionrp.local")
+  turn_user=$(read_val "TURN username" "$_tu")
+  turn_realm=$(read_val "TURN realm" "onionrp.local")
   blank
 
-  # Запись в .env
-  env_set NODE_ENV               production
-  env_set HOST                   0.0.0.0
-  env_set SERVER_PORT            3001
-  env_set WEB_PORT               "$web_port"
-  env_set MEDIASOUP_LISTEN_IP    0.0.0.0
-  env_set MEDIASOUP_ANNOUNCED_IP "$pub_ip"
-  env_set MEDIASOUP_MIN_PORT     "$min_port"
-  env_set MEDIASOUP_MAX_PORT     "$max_port"
-  env_set MEDIASOUP_LOG_LEVEL    warn
-  env_set REDIS_HOST             redis
-  env_set REDIS_PORT             6379
-  env_set REDIS_PASSWORD         "$redis_pw"
-  env_set JWT_SECRET             "$jwt_secret"
-  env_set JWT_EXPIRES_IN         24h
-  env_set STREAMER_PASSWORD      "$streamer_pw"
-  env_set MODERATOR_KEY_TTL      600
-  env_set TURN_SERVER_URL        "turn:${pub_ip}:3478"
-  env_set TURN_SERVER_USERNAME   "$turn_user"
-  env_set TURN_SERVER_PASSWORD   "$turn_pw"
-  env_set CORS_ORIGIN            "$cors_origin"
-  env_set RATE_LIMIT_WINDOW_MS   60000
-  env_set RATE_LIMIT_MAX_REQUESTS 100
+  # ─── Запись .env ────────────────────────────────────────
+  info "Запись конфигурации..."
 
-  # Обновить coturn конфиг
+  env_set NODE_ENV                "production"
+  env_set HOST                    "0.0.0.0"
+  env_set SERVER_PORT             "3001"
+  env_set WEB_PORT                "$web_port"
+  env_set MEDIASOUP_LISTEN_IP     "0.0.0.0"
+  env_set MEDIASOUP_ANNOUNCED_IP  "$pub_ip"
+  env_set MEDIASOUP_MIN_PORT      "$min_port"
+  env_set MEDIASOUP_MAX_PORT      "$max_port"
+  env_set MEDIASOUP_LOG_LEVEL     "warn"
+  env_set REDIS_HOST              "redis"
+  env_set REDIS_PORT              "6379"
+  env_set REDIS_PASSWORD          "$redis_pw"
+  env_set JWT_SECRET              "$jwt_secret"
+  env_set JWT_EXPIRES_IN          "24h"
+  env_set STREAMER_PASSWORD       "$streamer_pw"
+  env_set MODERATOR_KEY_TTL       "600"
+  env_set TURN_SERVER_URL         "turn:${pub_ip}:3478"
+  env_set TURN_SERVER_USERNAME    "$turn_user"
+  env_set TURN_SERVER_PASSWORD    "$turn_pw"
+  env_set CORS_ORIGIN             "$cors_origin"
+  env_set RATE_LIMIT_WINDOW_MS    "60000"
+  env_set RATE_LIMIT_MAX_REQUESTS "100"
+
+  # ─── coturn конфиг через awk ────────────────────────────
   local coturn_conf="${SCRIPT_DIR}/coturn/turnserver.conf"
   if [[ -f "$coturn_conf" ]]; then
-    sed -i "s|^external-ip=.*|external-ip=${pub_ip}|" "$coturn_conf"
-    sed -i "s|^user=.*|user=${turn_user}:${turn_pw}|" "$coturn_conf"
-    sed -i "s|^realm=.*|realm=${turn_realm}|" "$coturn_conf"
+    awk \
+      -v ip="$pub_ip" \
+      -v usr="${turn_user}:${turn_pw}" \
+      -v rlm="$turn_realm" \
+      '/^external-ip=/{ print "external-ip=" ip; next }
+       /^user=/        { print "user=" usr;        next }
+       /^realm=/       { print "realm=" rlm;       next }
+       { print }' \
+      "$coturn_conf" > "${coturn_conf}.tmp" && mv "${coturn_conf}.tmp" "$coturn_conf"
     ok "coturn/turnserver.conf обновлён"
   fi
 
-  blank
-  ok "${BGRN}.env успешно создан${RESET}"
-  blank
+  blank; ok "${BGRN}.env успешно сохранён${RESET}"; blank
 
-  local do_build
-  echo -ne "  ${WHT}Собрать и запустить контейнеры сейчас? ${DIM}[y/N]${RESET}: "
-  read -r do_build
+  printf "  ${WHT}Собрать и запустить контейнеры сейчас? [y/N]: ${RESET}" >/dev/tty
+  local do_build=""
+  read -r do_build </dev/tty || true
   if [[ "$do_build" =~ ^[Yy]$ ]]; then
     build_and_start
   fi
+  pause
 }
 
 # ────────────────────────────────────────────────────────────
 # Сборка и запуск
 # ────────────────────────────────────────────────────────────
 build_and_start() {
-  banner
+  blank; hr
   info "Сборка контейнеров (BuildKit)..."
   DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 \
-    compose build --progress=plain 2>&1 | tail -30
+    compose build --progress=plain 2>&1 | tail -40
   blank
   info "Запуск сервисов..."
   compose up -d
   blank
-  show_status
+  print_links
 }
 
 # ────────────────────────────────────────────────────────────
-# Статус сервисов
+# Статус сервисов (без clear — данные остаются)
 # ────────────────────────────────────────────────────────────
 show_status() {
-  banner
-  echo -e "  ${BCYN}  Статус сервисов${RESET}"
-  blank
-  compose ps 2>/dev/null || { err "Docker Compose недоступен"; return 1; }
-  blank
-
-  local port
-  port=$(env_get WEB_PORT)
-  port="${port:-13777}"
-  local pub_ip
-  pub_ip=$(env_get MEDIASOUP_ANNOUNCED_IP)
-
-  hr
-  blank
-  echo -e "  ${WHT}Ссылки:${RESET}"
-  echo -e "  ${BBLU}🌐  Dock-панель   ${BCYN}http://${pub_ip:-localhost}:${port}${RESET}"
-  echo -e "  ${BBLU}🔍  API health    ${BCYN}http://${pub_ip:-localhost}:${port}/api/health${RESET}"
-  echo -e "  ${BBLU}📺  OBS overlay   ${BCYN}http://${pub_ip:-localhost}:${port}/obs${RESET}"
-  blank
+  blank; hr
+  echo -e "  ${BCYN}>>  Статус сервисов${RESET}"; blank
+  compose ps 2>/dev/null || { err "Docker Compose недоступен"; pause; return 1; }
+  print_links
+  pause
 }
 
 # ────────────────────────────────────────────────────────────
 # Просмотр логов
 # ────────────────────────────────────────────────────────────
 show_logs_menu() {
-  banner
-  echo -e "  ${BCYN}  Просмотр логов${RESET}"
-  blank
+  blank; hr
+  echo -e "  ${BCYN}>>  Просмотр логов${RESET}"; blank
   echo -e "  ${WHT}1${RESET}  webrtc-node (сигнальный сервер)"
   echo -e "  ${WHT}2${RESET}  nginx"
   echo -e "  ${WHT}3${RESET}  redis"
@@ -292,31 +365,39 @@ show_logs_menu() {
   echo -e "  ${WHT}5${RESET}  все сервисы"
   echo -e "  ${WHT}0${RESET}  назад"
   blank
-  echo -ne "  ${WHT}Выбор${RESET}: "
-  read -r choice
+  echo -ne "  ${WHT}Выбор${RESET}: "; local choice; read -r choice
+  blank
+
+  local svc=""
   case "$choice" in
-    1) compose logs -f --tail=100 webrtc-node ;;
-    2) compose logs -f --tail=100 nginx ;;
-    3) compose logs -f --tail=100 redis ;;
-    4) compose logs -f --tail=100 coturn ;;
-    5) compose logs -f --tail=50 ;;
+    1) svc="webrtc-node" ;;
+    2) svc="nginx" ;;
+    3) svc="redis" ;;
+    4) svc="coturn" ;;
+    5) svc="" ;;
     *) return ;;
   esac
+
+  info "Ctrl+C для выхода из лога"
+  hr
+  if [[ -n "$svc" ]]; then
+    compose logs -f --tail=100 "$svc" || true
+  else
+    compose logs -f --tail=50 || true
+  fi
+  hr; pause
 }
 
 # ────────────────────────────────────────────────────────────
 # Генерация ключа модератора
 # ────────────────────────────────────────────────────────────
 gen_mod_key() {
-  banner
-  echo -e "  ${BCYN}  Генерация ключа модератора${RESET}"
-  blank
+  blank; hr
+  echo -e "  ${BCYN}>>  Генерация ключа модератора${RESET}"; blank
 
-  local port
-  port=$(env_get WEB_PORT); port="${port:-13777}"
-  local pub_ip
+  local port pub_ip streamer_pw
+  port=$(env_get WEB_PORT);              port="${port:-13777}"
   pub_ip=$(env_get MEDIASOUP_ANNOUNCED_IP); pub_ip="${pub_ip:-localhost}"
-  local streamer_pw
   streamer_pw=$(env_get STREAMER_PASSWORD)
 
   if [[ -z "$streamer_pw" ]]; then
@@ -324,147 +405,56 @@ gen_mod_key() {
   fi
 
   info "Авторизация как стример..."
-  local token_resp
-  token_resp=$(curl -s -X POST \
+  local token_resp token
+  # Правильный эндпоинт: POST /api/auth/streamer
+  token_resp=$(curl -s --max-time 10 -X POST \
     -H "Content-Type: application/json" \
     -d "{\"password\":\"${streamer_pw}\"}" \
-    "http://${pub_ip}:${port}/api/auth/login" 2>/dev/null) || \
-    { err "Не удалось подключиться к серверу. Сервисы запущены?"; blank; pause; return; }
+    "http://${pub_ip}:${port}/api/auth/streamer" 2>/dev/null) || true
 
-  local token
-  token=$(echo "$token_resp" | grep -o '"token":"[^"]*"' | cut -d'"' -f4 2>/dev/null) || true
+  token=$(printf '%s' "$token_resp" | grep -o '"token":"[^"]*"' | cut -d'"' -f4 2>/dev/null) || true
 
   if [[ -z "$token" ]]; then
-    err "Ошибка авторизации. Проверьте пароль стримера."
-    echo "  Ответ: ${DIM}${token_resp}${RESET}"
-    blank; pause; return
+    err "Авторизация не удалась. Сервисы запущены?"
+    [[ -n "$token_resp" ]] && echo -e "  ${DIM}Ответ: ${token_resp}${RESET}"
+    pause; return
   fi
   ok "Авторизован"
 
   info "Генерация ключа..."
   local key_resp key
-  key_resp=$(curl -s -X POST \
+  # Правильный эндпоинт: POST /api/auth/keys/generate
+  key_resp=$(curl -s --max-time 10 -X POST \
     -H "Authorization: Bearer ${token}" \
-    "http://${pub_ip}:${port}/api/auth/moderator-key" 2>/dev/null) || true
-  key=$(echo "$key_resp" | grep -o '"key":"[^"]*"' | cut -d'"' -f4 2>/dev/null) || true
+    "http://${pub_ip}:${port}/api/auth/keys/generate" 2>/dev/null) || true
+  key=$(printf '%s' "$key_resp" | grep -o '"key":"[^"]*"' | cut -d'"' -f4 2>/dev/null) || true
 
   if [[ -z "$key" ]]; then
-    err "Не удалось получить ключ."
-    echo "  Ответ: ${DIM}${key_resp}${RESET}"
-    blank; pause; return
-  fi
-
-  blank
-  echo -e "  ${BGRN}  Ключ модератора:${RESET}"
-  blank
-  echo -e "  ${BYLW}  ┌──────────────────────────────────────────┐${RESET}"
-  echo -e "  ${BYLW}  │  ${BCYN}${key}${BYLW}  │${RESET}"
-  echo -e "  ${BYLW}  └──────────────────────────────────────────┘${RESET}"
-  blank
-  local ttl
-  ttl=$(env_get MODERATOR_KEY_TTL); ttl="${ttl:-600}"
-  info "Ключ действителен ${ttl} секунд ($(( ttl / 60 )) мин)"
-  blank
-  pause
-}
-
-# ────────────────────────────────────────────────────────────
-# Обновление (git pull + rebuild)
-# ────────────────────────────────────────────────────────────
-do_update() {
-  banner
-  echo -e "  ${BCYN}  Обновление${RESET}"
-  blank
-
-  if ! command -v git &>/dev/null; then
-    warn "git не найден. Обновление вручную: скачайте новую версию в ${SCRIPT_DIR}"
+    err "Не удалось получить ключ"
+    [[ -n "$key_resp" ]] && echo -e "  ${DIM}Ответ: ${key_resp}${RESET}"
     pause; return
   fi
 
-  info "Остановка сервисов..."
-  compose stop
-
-  info "Получение обновлений..."
-  git -C "$SCRIPT_DIR" pull --ff-only || {
-    warn "git pull завершился с ошибкой. Обновите вручную."
-    compose start; pause; return
-  }
-
-  build_and_start
   blank
-  ok "Обновление завершено"
-  pause
+  echo -e "  ${BGRN}  Ключ модератора:${RESET}"; blank
+  echo -e "  ${BYLW}  +------------------------------------------+${RESET}"
+  echo -e "  ${BYLW}  |  ${BCYN}${key}${BYLW}  |${RESET}"
+  echo -e "  ${BYLW}  +------------------------------------------+${RESET}"
+  blank
+  local ttl; ttl=$(env_get MODERATOR_KEY_TTL); ttl="${ttl:-600}"
+  info "Действителен $(( ttl / 60 )) мин ($ttl с)"
+  blank; pause
 }
 
 # ────────────────────────────────────────────────────────────
-# Создание резервной копии .env + volumes metadata
-# ────────────────────────────────────────────────────────────
-do_backup() {
-  banner
-  echo -e "  ${BCYN}  Резервное копирование${RESET}"
-  blank
-
-  local backup_dir="${SCRIPT_DIR}/backups"
-  mkdir -p "$backup_dir"
-  local ts
-  ts=$(date +%Y%m%d_%H%M%S)
-  local backup_file="${backup_dir}/backup_${ts}.tar.gz"
-
-  info "Создание архива..."
-  tar -czf "$backup_file" \
-    -C "$SCRIPT_DIR" \
-    .env \
-    coturn/turnserver.conf \
-    2>/dev/null || true
-
-  ok "Сохранено: ${BYLW}${backup_file}${RESET}"
-  blank
-  info "Для резервного копирования данных Redis:"
-  echo -e "  ${DIM}docker compose exec redis redis-cli -a \"\$REDIS_PASSWORD\" BGSAVE${RESET}"
-  blank
-  pause
-}
-
-# ────────────────────────────────────────────────────────────
-# Деинсталляция
-# ────────────────────────────────────────────────────────────
-do_uninstall() {
-  banner
-  echo -e "  ${BRED}  Деинсталляция${RESET}"
-  blank
-  warn "Это остановит и удалит все контейнеры и Docker volumes!"
-  warn "Файлы проекта (${SCRIPT_DIR}) НЕ будут удалены."
-  blank
-  echo -ne "  ${BRED}Введите ${WHT}YES${BRED} для подтверждения${RESET}: "
-  read -r confirm
-  [[ "$confirm" == "YES" ]] || { info "Отменено"; pause; return; }
-
-  compose down -v --remove-orphans 2>/dev/null || true
-  blank
-  ok "Контейнеры и volumes удалены"
-  blank
-  pause
-}
-
-# ────────────────────────────────────────────────────────────
-# Открыть .env в редакторе
-# ────────────────────────────────────────────────────────────
-edit_env() {
-  [[ -f "$ENV_FILE" ]] || { err ".env не найден. Запустите мастер настройки (п.1)"; pause; return; }
-  local editor="${EDITOR:-nano}"
-  command -v "$editor" &>/dev/null || editor=vi
-  "$editor" "$ENV_FILE"
-}
-
-# ────────────────────────────────────────────────────────────
-# Показать текущие настройки
+# Текущая конфигурация
 # ────────────────────────────────────────────────────────────
 show_config() {
-  banner
-  echo -e "  ${BCYN}  Текущая конфигурация${RESET}"
-  blank
+  blank; hr
+  echo -e "  ${BCYN}>>  Текущая конфигурация${RESET}"; blank
+
   if [[ ! -f "$ENV_FILE" ]]; then
-    warn ".env не найден"
+    warn ".env не найден — запустите мастер настройки (п.1)"
     pause; return
   fi
 
@@ -474,91 +464,165 @@ show_config() {
   server_port=$(env_get SERVER_PORT)
   cors=$(env_get CORS_ORIGIN)
 
-  printf "  ${DIM}%-32s${RESET}  %s\n" "Публичный IP"      "${BCYN}${pub_ip}${RESET}"
-  printf "  ${DIM}%-32s${RESET}  %s\n" "Порт веб-панели"   "${BCYN}${web_port}${RESET}"
-  printf "  ${DIM}%-32s${RESET}  %s\n" "Порт сигн. сервера" "${BCYN}${server_port}${RESET}"
-  printf "  ${DIM}%-32s${RESET}  %s\n" "CORS Origin"        "${BCYN}${cors}${RESET}"
-  printf "  ${DIM}%-32s${RESET}  %s\n" "UDP диапазон" \
-    "${BCYN}$(env_get MEDIASOUP_MIN_PORT)–$(env_get MEDIASOUP_MAX_PORT)${RESET}"
-  printf "  ${DIM}%-32s${RESET}  %s\n" "TURN URL"           "${BCYN}$(env_get TURN_SERVER_URL)${RESET}"
-  printf "  ${DIM}%-32s${RESET}  %s\n" "Redis host:port" \
-    "${BCYN}$(env_get REDIS_HOST):$(env_get REDIS_PORT)${RESET}"
-  printf "  ${DIM}%-32s${RESET}  %s\n" "Node ENV"           "${BCYN}$(env_get NODE_ENV)${RESET}"
-  blank
-
-  hr
-  blank
-  echo -e "  ${DIM}Конфиг-файл: ${ENV_FILE}${RESET}"
-  blank
-  pause
+  # printf с цветом в format-строке — не в аргументе
+  _row() { printf "  ${DIM}%-30s${RESET}  ${BCYN}%s${RESET}\n" "$1" "$2"; }
+  _row "Публичный IP"        "$pub_ip"
+  _row "Порт веб-панели"     "$web_port"
+  _row "Порт сигн. сервера"  "$server_port"
+  _row "CORS Origin"         "$cors"
+  _row "UDP диапазон"        "$(env_get MEDIASOUP_MIN_PORT)-$(env_get MEDIASOUP_MAX_PORT)"
+  _row "TURN URL"            "$(env_get TURN_SERVER_URL)"
+  _row "Redis host:port"     "$(env_get REDIS_HOST):$(env_get REDIS_PORT)"
+  _row "Node ENV"            "$(env_get NODE_ENV)"
+  blank; hr; blank
+  echo -e "  ${DIM}Файл: ${ENV_FILE}${RESET}"
+  blank; pause
 }
 
 # ────────────────────────────────────────────────────────────
-pause() { echo -ne "  ${DIM}[ Нажмите Enter для продолжения ]${RESET}"; read -r; }
+# Обновление
+# ────────────────────────────────────────────────────────────
+do_update() {
+  blank; hr
+  echo -e "  ${BCYN}>>  Обновление${RESET}"; blank
+
+  if ! command -v git &>/dev/null; then
+    warn "git не найден"
+    pause; return
+  fi
+
+  info "Остановка сервисов..."
+  compose stop || true
+  info "git pull..."
+  git -C "$SCRIPT_DIR" pull --ff-only || {
+    warn "git pull не удался — обновите вручную"
+    compose start || true; pause; return
+  }
+  build_and_start
+  ok "Обновление завершено"; pause
+}
 
 # ────────────────────────────────────────────────────────────
-# Меню управления сервисами
+# Резервная копия
+# ────────────────────────────────────────────────────────────
+do_backup() {
+  blank; hr
+  echo -e "  ${BCYN}>>  Резервное копирование${RESET}"; blank
+
+  local backup_dir="${SCRIPT_DIR}/backups"
+  mkdir -p "$backup_dir"
+  local ts; ts=$(date +%Y%m%d_%H%M%S)
+  local backup_file="${backup_dir}/backup_${ts}.tar.gz"
+
+  info "Создание архива..."
+  tar -czf "$backup_file" -C "$SCRIPT_DIR" \
+    .env coturn/turnserver.conf 2>/dev/null || true
+
+  ok "Сохранено: ${BYLW}${backup_file}${RESET}"; blank
+  info "Redis backup: docker compose exec redis redis-cli -a \$REDIS_PASSWORD BGSAVE"
+  blank; pause
+}
+
+# ────────────────────────────────────────────────────────────
+# Деинсталляция
+# ────────────────────────────────────────────────────────────
+do_uninstall() {
+  blank; hr
+  echo -e "  ${BRED}>>  Деинсталляция${RESET}"; blank
+  warn "Остановит и УДАЛИТ все контейнеры и Docker volumes!"
+  warn "Файлы проекта (${SCRIPT_DIR}) НЕ будут удалены."; blank
+
+  printf "  ${BRED}Введите YES для подтверждения: ${RESET}" >/dev/tty
+  local confirm=""
+  read -r confirm </dev/tty || true
+
+  if [[ "$confirm" != "YES" ]]; then
+    info "Отменено"; pause; return
+  fi
+
+  compose down -v --remove-orphans 2>/dev/null || true
+  blank; ok "Контейнеры и volumes удалены"; blank; pause
+}
+
+# ────────────────────────────────────────────────────────────
+# Редактировать .env
+# ────────────────────────────────────────────────────────────
+edit_env() {
+  if [[ ! -f "$ENV_FILE" ]]; then
+    err ".env не найден — запустите мастер настройки (п.1)"
+    pause; return
+  fi
+  local editor="${EDITOR:-nano}"
+  command -v "$editor" &>/dev/null || editor=vi
+  command -v "$editor" &>/dev/null || { err "Редактор не найден (нет nano/vi)"; pause; return; }
+  "$editor" "$ENV_FILE"
+}
+
+# ────────────────────────────────────────────────────────────
+# Управление сервисами
 # ────────────────────────────────────────────────────────────
 service_menu() {
   while true; do
-    banner
-    echo -e "  ${BCYN}  Управление сервисами${RESET}"
-    blank
-    echo -e "  ${WHT}1${RESET}  Запустить  (start)"
-    echo -e "  ${WHT}2${RESET}  Остановить (stop)"
-    echo -e "  ${WHT}3${RESET}  Перезапустить (restart)"
-    echo -e "  ${WHT}4${RESET}  Пересобрать и перезапустить (build)"
+    blank; hr
+    echo -e "  ${BCYN}>>  Управление сервисами${RESET}"; blank
+    echo -e "  ${WHT}1${RESET}  Запустить"
+    echo -e "  ${WHT}2${RESET}  Остановить"
+    echo -e "  ${WHT}3${RESET}  Перезапустить"
+    echo -e "  ${WHT}4${RESET}  Пересобрать + запустить"
     echo -e "  ${WHT}5${RESET}  Статус"
     echo -e "  ${WHT}0${RESET}  Назад"
-    blank
-    echo -ne "  ${WHT}Выбор${RESET}: "
-    read -r choice
+    blank; echo -ne "  ${WHT}Выбор${RESET}: "
+    local choice; read -r choice; blank
+
     case "$choice" in
-      1) compose start;   pause ;;
-      2) compose stop;    pause ;;
-      3) compose restart; pause ;;
+      1) compose start   && ok "Запущено"       || err "Ошибка"; pause ;;
+      2) compose stop    && ok "Остановлено"    || err "Ошибка"; pause ;;
+      3) compose restart && ok "Перезапущено"   || err "Ошибка"; pause ;;
       4) build_and_start; pause ;;
-      5) show_status;     pause ;;
+      5) show_status ;;
       0) return ;;
+      *) warn "Неверный выбор" ;;
     esac
   done
 }
 
 # ────────────────────────────────────────────────────────────
 # Главное меню
+# banner() НЕ очищает экран — вывод предыдущих команд остаётся
 # ────────────────────────────────────────────────────────────
 main_menu() {
+  clear
   while true; do
     banner
 
-    # Краткий статус в заголовке
-    if compose ps --services --filter "status=running" 2>/dev/null | grep -q .; then
-      echo -e "  Сервисы: ${BGRN}● запущены${RESET}"
+    # Быстрый статус сервисов
+    local svc_status
+    if compose ps --services --filter "status=running" 2>/dev/null | grep -q . 2>/dev/null; then
+      svc_status="${BGRN}zapusheny${RESET}"
     else
-      echo -e "  Сервисы: ${DIM}○ остановлены${RESET}"
+      svc_status="${DIM}ostanovleny${RESET}"
     fi
-    blank
+    echo -e "  Сервисы: ${svc_status}"; blank
 
-    echo -e "  ${WHT} 1${RESET}  Первоначальная установка / Мастер настройки"
+    echo -e "  ${WHT} 1${RESET}  Установка / Мастер настройки"
     echo -e "  ${WHT} 2${RESET}  Управление сервисами"
-    echo -e "  ${WHT} 3${RESET}  Показать статус"
-    echo -e "  ${WHT} 4${RESET}  Просмотр логов"
-    echo -e "  ${WHT} 5${RESET}  Генерация ключа модератора"
+    echo -e "  ${WHT} 3${RESET}  Статус"
+    echo -e "  ${WHT} 4${RESET}  Логи"
+    echo -e "  ${WHT} 5${RESET}  Ключ модератора"
     echo -e "  ${WHT} 6${RESET}  Текущая конфигурация"
     echo -e "  ${WHT} 7${RESET}  Редактировать .env"
-    echo -e "  ${WHT} 8${RESET}  Резервное копирование"
-    echo -e "  ${WHT} 9${RESET}  Обновить (git pull + rebuild)"
+    echo -e "  ${WHT} 8${RESET}  Резервная копия"
+    echo -e "  ${WHT} 9${RESET}  Обновить (git pull)"
     echo -e "  ${WHT}10${RESET}  Деинсталляция"
     blank
     echo -e "  ${WHT} 0${RESET}  Выход"
-    blank
-    echo -ne "  ${WHT}Выбор${RESET}: "
-    read -r choice
+    blank; echo -ne "  ${WHT}Выбор${RESET}: "
+    local choice; read -r choice
 
     case "$choice" in
       1)  run_wizard ;;
       2)  service_menu ;;
-      3)  show_status;     pause ;;
+      3)  show_status ;;
       4)  show_logs_menu ;;
       5)  gen_mod_key ;;
       6)  show_config ;;
@@ -569,6 +633,8 @@ main_menu() {
       0)  blank; echo -e "  ${DIM}Выход${RESET}"; blank; exit 0 ;;
       *)  warn "Неверный выбор" ;;
     esac
+    # После каждого действия banner() рисуется НИЖЕ без очистки экрана
+    # Пользователь видит вывод предыдущей команды при скролле вверх
   done
 }
 
@@ -576,7 +642,6 @@ main_menu() {
 # Точка входа
 # ────────────────────────────────────────────────────────────
 main() {
-  # Неинтерактивный режим (CI / автоматизация)
   case "${1:-}" in
     install)   check_deps && run_wizard ;;
     start)     compose up -d ;;
@@ -588,16 +653,11 @@ main() {
     update)    do_update ;;
     uninstall) do_uninstall ;;
     "")
-      check_deps || {
-        blank
-        warn "Установите Docker прежде чем продолжить."
-        blank
-        exit 1
-      }
+      check_deps || { blank; warn "Установите Docker."; blank; exit 1; }
       main_menu
       ;;
     *)
-      echo "Использование: $0 [install|start|stop|restart|build|status|logs|update|uninstall]"
+      echo "Использование: $0 [install|start|stop|restart|build|status|logs [service]|update|uninstall]"
       exit 1
       ;;
   esac

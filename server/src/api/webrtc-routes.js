@@ -1,66 +1,69 @@
 /**
  * Маршруты WebRTC
  * Информация о сервере ICE и статистика
+ *
+ * Экспортируется фабрика createWebRTCRoutes(room) — принимает экземпляр Room
+ * и возвращает Express-роутер.  Это позволяет избежать двойного module.exports,
+ * который был в предыдущей версии и вызывал путаницу.
  */
 
 const express = require('express');
-const router = express.Router();
 const config = require('../config');
 const { authMiddleware, moderatorOrStreamer } = require('../auth/middleware');
 const logger = require('../utils/logger');
 
 /**
- * GET /api/webrtc/ice-servers
- * Получение конфигурации ICE серверов
+ * Создание роутера WebRTC маршрутов
+ * @param {Room} room — экземпляр комнаты WebRTC
+ * @returns {express.Router}
  */
-router.get('/ice-servers', authMiddleware, (req, res) => {
-  const iceServers = [
-    // Публичные STUN серверы
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-  ];
+function createWebRTCRoutes(room) {
+  const router = express.Router();
 
-  // Добавляем TURN сервер если сконфигурирован
-  if (config.turn.url) {
-    iceServers.push({
-      urls: config.turn.url,
-      username: config.turn.username,
-      credential: config.turn.password,
-    });
-  }
+  /**
+   * GET /api/webrtc/ice-servers
+   * Получение конфигурации ICE серверов
+   */
+  router.get('/ice-servers', authMiddleware, (req, res) => {
+    const iceServers = [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+    ];
 
-  res.json({ iceServers });
-});
+    if (config.turn.url) {
+      iceServers.push({
+        urls: config.turn.url,
+        username: config.turn.username,
+        credential: config.turn.password,
+      });
+    }
 
-/**
- * GET /api/webrtc/stats
- * Получение статистики WebRTC сервера
- */
-router.get('/stats', authMiddleware, moderatorOrStreamer, (req, res) => {
-  // Статистика доступна через WebSocket, здесь базовая информация
-  res.json({
-    status: 'active',
-    uptime: process.uptime(),
-    memory: process.memoryUsage(),
+    res.json({ iceServers });
   });
-});
 
-module.exports = router;
+  /**
+   * GET /api/webrtc/stats
+   * Базовая статистика процесса (детальная — через WebSocket getStats)
+   */
+  router.get('/stats', authMiddleware, moderatorOrStreamer, (req, res) => {
+    res.json({
+      status: 'active',
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+    });
+  });
 
-// Экспортируем функцию для привязки комнаты
-module.exports.createWebRTCRoutes = (room) => {
   /**
    * GET /api/webrtc/room-stats
-   * Детальная статистика комнаты
+   * Детальная статистика комнаты (пиры, продюсеры)
    */
   router.get('/room-stats', authMiddleware, moderatorOrStreamer, async (req, res) => {
     try {
-      const stats = {
+      res.json({
         peers: room.getPeerCount(),
         producers: room.getProducerIds().length,
         producerIds: room.getProducerIds(),
-      };
-      res.json(stats);
+      });
     } catch (err) {
       logger.error('Ошибка получения статистики комнаты', { error: err.message });
       res.status(500).json({ error: 'Ошибка получения статистики' });
@@ -68,4 +71,6 @@ module.exports.createWebRTCRoutes = (room) => {
   });
 
   return router;
-};
+}
+
+module.exports = { createWebRTCRoutes };

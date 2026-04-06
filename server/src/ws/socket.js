@@ -35,9 +35,13 @@ function initSocketServer(httpServer, room) {
       if (origin === config.corsOrigin) {
         return callback(null, true);
       }
-      // Allow OBS browser source (no Origin header) on /overlay namespace
-      const url = req.url || '';
-      if (!origin && url.startsWith('/socket.io/?EIO') && url.includes('nsp=%2Foverlay')) {
+      // Allow headless clients without Origin header (OBS browser source, native apps).
+      // In Socket.IO v4 the namespace is established via protocol packets AFTER the HTTP
+      // upgrade — it is NOT present in the initial request URL, so we cannot filter by
+      // namespace here.  The /overlay namespace has no JWT middleware (public by design),
+      // and the main namespace rejects unauthenticated connections via JWT middleware, so
+      // allowing headless clients at the HTTP level is safe.
+      if (!origin) {
         return callback(null, true);
       }
       callback('Недопустимый Origin', false);
@@ -65,6 +69,9 @@ function initSocketServer(httpServer, room) {
       next(new Error('Невалидный токен'));
     }
   });
+
+  // Объявляем overlayNsp до io.on('connection') чтобы он был доступен внутри обработчиков
+  const overlayNsp = io.of('/overlay');
 
   io.on('connection', (socket) => {
     const { role, id: userId } = socket.user;
@@ -156,10 +163,12 @@ function initSocketServer(httpServer, room) {
 
     socket.on('setVolume', ({ producerId, volume }) => {
       if (role !== 'moderator' && role !== 'streamer') return;
-      io.emit('volumeChanged', { producerId, volume });
+      // Клamp volume в диапазон [0, 1] — защита от невалидных значений (NaN, Infinity, -99)
+      const safeVolume = Math.max(0, Math.min(1, parseFloat(volume) || 0));
+      io.emit('volumeChanged', { producerId, volume: safeVolume });
       // Relay to OBS overlay namespace as well
-      overlayNsp.emit('volumeChanged', { producerId, volume });
-      logger.debug('Громкость изменена', { producerId, volume, by: role });
+      overlayNsp.emit('volumeChanged', { producerId, volume: safeVolume });
+      logger.debug('Громкость изменена', { producerId, volume: safeVolume, by: role });
     });
 
     socket.on('setOverlay', ({ type, url, options }) => {
@@ -228,9 +237,8 @@ function initSocketServer(httpServer, room) {
   // ─────────────────────────────────────────────
   // /overlay NAMESPACE — публичный, только-чтение
   // OBS browser source подключается сюда без JWT
+  // (overlayNsp объявлен выше, перед io.on('connection'))
   // ─────────────────────────────────────────────
-  const overlayNsp = io.of('/overlay');
-
   overlayNsp.on('connection', (socket) => {
     logger.info('OBS overlay подключён', { socketId: socket.id });
 
