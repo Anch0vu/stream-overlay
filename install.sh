@@ -177,7 +177,7 @@ env_set() {
 }
 
 # ────────────────────────────────────────────────────────────
-# Ссылки на сервисы
+# Ссылки и доступы после запуска
 # ────────────────────────────────────────────────────────────
 print_links() {
   local port pub_ip
@@ -185,10 +185,83 @@ print_links() {
   pub_ip=$(env_get MEDIASOUP_ANNOUNCED_IP); pub_ip="${pub_ip:-localhost}"
   hr; blank
   echo -e "  ${WHT}Ссылки:${RESET}"
-  echo -e "  ${BBLU}>>  Dock-панель  ${BCYN}http://${pub_ip}:${port}${RESET}"
-  echo -e "  ${BBLU}>>  API health   ${BCYN}http://${pub_ip}:${port}/api/health${RESET}"
-  echo -e "  ${BBLU}>>  OBS overlay  ${BCYN}http://${pub_ip}:${port}/obs${RESET}"
+  echo -e "  ${BBLU}  Dock-панель  ${BCYN}http://${pub_ip}:${port}${RESET}"
+  echo -e "  ${BBLU}  API health   ${BCYN}http://${pub_ip}:${port}/api/health${RESET}"
+  echo -e "  ${BBLU}  OBS overlay  ${BCYN}http://${pub_ip}:${port}/obs${RESET}"
   blank
+
+  # Показываем пароль стримера, если .env существует
+  local sp; sp=$(env_get STREAMER_PASSWORD)
+  local rm; rm=$(env_get REDIS_MODE); rm="${rm:-docker}"
+  if [[ -n "$sp" ]]; then
+    echo -e "  ${WHT}Доступы:${RESET}"
+    echo -e "  ${DIM}  Пароль стримера   ${RESET}${BYLW}${sp}${RESET}"
+    echo -e "  ${DIM}  Режим Redis        ${RESET}${BYLW}${rm}${RESET}"
+    echo -e "  ${DIM}  Остальное          ${RESET}${DIM}→ cat ${ENV_FILE}${RESET}"
+    blank
+  fi
+}
+
+# ────────────────────────────────────────────────────────────
+# Ожидание готовности API (polling /api/health)
+# ────────────────────────────────────────────────────────────
+wait_healthy() {
+  local port pub_ip
+  port=$(env_get WEB_PORT); port="${port:-13777}"
+  pub_ip=$(env_get MEDIASOUP_ANNOUNCED_IP); pub_ip="${pub_ip:-localhost}"
+  local url="http://127.0.0.1:${port}/api/health"
+
+  info "Ожидание готовности сервера..."
+  local elapsed=0 dot_count=0
+  printf "  " >/dev/tty
+  while [[ $elapsed -lt 90 ]]; do
+    if curl -sf --max-time 2 "$url" &>/dev/null; then
+      printf "\n" >/dev/tty
+      ok "Сервис отвечает — готов к работе"; blank
+      return 0
+    fi
+    printf "." >/dev/tty
+    sleep 3
+    (( elapsed += 3, dot_count += 1 ))
+    # Новая строка каждые 20 точек
+    [[ $(( dot_count % 20 )) -eq 0 ]] && printf "\n  " >/dev/tty
+  done
+  printf "\n" >/dev/tty
+  warn "Сервер не ответил за 90 секунд — проверьте логи (п.4)"
+  return 1
+}
+
+# ────────────────────────────────────────────────────────────
+# Проверка firewall для WebRTC UDP портов
+# ────────────────────────────────────────────────────────────
+check_firewall() {
+  local min_port max_port
+  min_port=$(env_get MEDIASOUP_MIN_PORT); min_port="${min_port:-40000}"
+  max_port=$(env_get MEDIASOUP_MAX_PORT); max_port="${max_port:-49999}"
+
+  # ufw
+  if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "^Status: active"; then
+    if ! ufw status 2>/dev/null | grep -qE "${min_port}[:/]|${min_port}:${max_port}"; then
+      blank
+      warn "ufw активен, но UDP ${min_port}:${max_port} не открыты!"
+      echo -e "  ${DIM}Выполните:  ufw allow ${min_port}:${max_port}/udp${RESET}"
+      blank
+    fi
+    return
+  fi
+
+  # iptables (только если ufw не активен)
+  if command -v iptables &>/dev/null; then
+    local rules; rules=$(iptables -L INPUT -n 2>/dev/null || true)
+    if echo "$rules" | grep -q "DROP\|REJECT" && \
+       ! echo "$rules" | grep -qE "dpt:${min_port}|dpts:${min_port}"; then
+      blank
+      warn "iptables DROP обнаружен, UDP ${min_port}:${max_port} могут быть заблокированы"
+      echo -e "  ${DIM}Если стрим не работает, откройте порты вручную:${RESET}"
+      echo -e "  ${DIM}  iptables -A INPUT -p udp --dport ${min_port}:${max_port} -j ACCEPT${RESET}"
+      blank
+    fi
+  fi
 }
 
 # ────────────────────────────────────────────────────────────
@@ -394,7 +467,10 @@ run_wizard() {
     ok "coturn/turnserver.conf обновлён"
   fi
 
-  blank; ok "${BGRN}.env успешно сохранён${RESET}"; blank
+  # Ограничиваем доступ к .env (пароли, JWT secret)
+  chmod 600 "$ENV_FILE" 2>/dev/null || true
+
+  blank; ok "${BGRN}.env успешно сохранён${RESET}  ${DIM}(chmod 600)${RESET}"; blank
 
   printf "  ${WHT}Собрать и запустить контейнеры сейчас? [y/N]: ${RESET}" >/dev/tty
   local do_build=""
@@ -422,6 +498,8 @@ build_and_start() {
   info "Запуск сервисов..."
   compose up -d
   blank
+  check_firewall
+  wait_healthy || true
   print_links
 }
 
@@ -571,17 +649,40 @@ do_update() {
   echo -e "  ${BCYN}>>  Обновление${RESET}"; blank
 
   if ! command -v git &>/dev/null; then
-    warn "git не найден"
+    warn "git не найден — обновление через git невозможно"
     pause; return
   fi
 
+  info "Проверка новых коммитов..."
+  git -C "$SCRIPT_DIR" fetch origin 2>&1 || {
+    warn "Не удалось подключиться к git remote"
+    pause; return
+  }
+
+  local branch; branch=$(git -C "$SCRIPT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+  local ahead_behind; ahead_behind=$(git -C "$SCRIPT_DIR" rev-list --left-right --count "HEAD...origin/${branch}" 2>/dev/null || echo "0	0")
+  local behind; behind=$(echo "$ahead_behind" | awk '{print $2}')
+
+  if [[ "$behind" == "0" ]]; then
+    ok "Уже актуальная версия — обновление не требуется"
+    pause; return
+  fi
+
+  blank
+  echo -e "  ${DIM}Новые коммиты (${behind}):${RESET}"
+  git -C "$SCRIPT_DIR" log --oneline "HEAD..origin/${branch}" 2>/dev/null | \
+    while IFS= read -r line; do echo -e "  ${DIM}  ${line}${RESET}"; done
+  blank
+
   info "Остановка сервисов..."
   compose stop || true
+
   info "git pull..."
-  git -C "$SCRIPT_DIR" pull --ff-only || {
-    warn "git pull не удался — обновите вручную"
+  git -C "$SCRIPT_DIR" pull --ff-only origin "$branch" || {
+    warn "git pull не удался — конфликт изменений. Обновите вручную."
     compose start || true; pause; return
   }
+
   build_and_start
   ok "Обновление завершено"; pause
 }
@@ -733,7 +834,8 @@ main() {
     restart)   compose restart ;;
     build)     build_and_start ;;
     status)    show_status ;;
-    logs)      compose logs -f --tail=100 "${2:-webrtc-node}" ;;
+    logs)      [[ -n "${2:-}" ]] && compose logs -f --tail=100 "$2" \
+                                  || compose logs -f --tail=50 ;;
     update)    do_update ;;
     uninstall) do_uninstall ;;
     "")

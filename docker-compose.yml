@@ -40,6 +40,11 @@ services:
       - server-logs:/app/logs
     networks:
       - onionrp-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
     # required: false — если redis-профиль не активен (внешний Redis),
     # зависимость игнорируется и контейнер стартует без ожидания.
     depends_on:
@@ -90,6 +95,11 @@ services:
     depends_on:
       - web
       - webrtc-node
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
 
   # --- Coturn: TURN сервер для NAT traversal ---
   coturn:
@@ -103,6 +113,11 @@ services:
       - ./coturn/turnserver.conf:/etc/turnserver.conf:ro
     networks:
       - onionrp-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
 
 volumes:
   redis-data:
