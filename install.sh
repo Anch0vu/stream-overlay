@@ -109,12 +109,17 @@ check_deps() {
 
 # ────────────────────────────────────────────────────────────
 # compose wrapper — всегда с project-directory
+# При REDIS_MODE=docker автоматически добавляет --profile docker-redis
 # ────────────────────────────────────────────────────────────
 compose() {
+  local extra_args=()
+  if [[ "$(env_get REDIS_MODE)" == "docker" ]]; then
+    extra_args=(--profile docker-redis)
+  fi
   if docker compose version &>/dev/null 2>&1; then
-    docker compose --project-directory "$SCRIPT_DIR" -f "$COMPOSE_FILE" "$@"
+    docker compose --project-directory "$SCRIPT_DIR" -f "$COMPOSE_FILE" "${extra_args[@]}" "$@"
   else
-    docker-compose --project-directory "$SCRIPT_DIR" -f "$COMPOSE_FILE" "$@"
+    docker-compose --project-directory "$SCRIPT_DIR" -f "$COMPOSE_FILE" "${extra_args[@]}" "$@"
   fi
 }
 
@@ -220,11 +225,69 @@ run_wizard() {
   cors_origin=$(read_val "CORS Origin" "http://${pub_ip}:${web_port}")
   blank
 
+  # ─── Redis ──────────────────────────────────────────────
+  echo -e "  ${BBLU}--  Redis  --------------------------------------${RESET}"
+  blank
+
+  local redis_mode redis_host redis_port
+  # Проверяем, занят ли порт 6379 системным Redis
+  local redis_running=false
+  if ss -lptn 2>/dev/null | grep -q ':6379 ' || \
+     nc -z 127.0.0.1 6379 2>/dev/null; then
+    redis_running=true
+  fi
+
+  local saved_mode; saved_mode=$(env_get REDIS_MODE)
+
+  if [[ "$redis_running" == "true" ]]; then
+    echo -e "  ${YLW}!  На сервере уже запущен Redis (порт 6379 занят).${RESET}"
+    blank
+    echo -e "  ${DIM}[1] Использовать системный Redis (рекомендуется)${RESET}"
+    echo -e "  ${DIM}[2] Запустить Redis в Docker  (потребует остановки системного)${RESET}"
+    blank
+    echo -ne "  ${WHT}Выбор [${saved_mode:-1}]: ${RESET}" >/dev/tty
+    local redis_choice; read -r redis_choice </dev/tty || true
+    redis_choice="${redis_choice:-${saved_mode:-1}}"
+  else
+    echo -e "  ${DIM}[1] Запустить Redis в Docker  (рекомендуется)${RESET}"
+    echo -e "  ${DIM}[2] Использовать внешний Redis (укажите хост)${RESET}"
+    blank
+    echo -ne "  ${WHT}Выбор [${saved_mode:-1}]: ${RESET}" >/dev/tty
+    local redis_choice; read -r redis_choice </dev/tty || true
+    # При обнаруженном системном Redis по умолчанию 1=external; без Redis 1=docker
+    if [[ "$redis_running" == "true" ]]; then
+      redis_choice="${redis_choice:-${saved_mode:-1}}"
+    else
+      redis_choice="${redis_choice:-${saved_mode:-1}}"
+    fi
+  fi
+  blank
+
+  if { [[ "$redis_running" == "true" ]] && [[ "$redis_choice" == "1" ]]; } || \
+     { [[ "$redis_running" == "false" ]] && [[ "$redis_choice" == "2" ]]; }; then
+    # Внешний Redis
+    redis_mode="external"
+    local _rh; _rh=$(env_get REDIS_HOST)
+    [[ "$_rh" == "redis" || -z "$_rh" ]] && _rh="127.0.0.1"
+    redis_host=$(read_val "Redis host" "$_rh")
+    redis_port=$(read_val "Redis port" "$(env_get REDIS_PORT || echo 6379)")
+    blank
+  else
+    # Docker Redis
+    redis_mode="docker"
+    redis_host="redis"
+    redis_port="6379"
+  fi
+
   # ─── Пароли ─────────────────────────────────────────────
   echo -e "  ${BBLU}--  Пароли (пусто = автогенерация)  ------------${RESET}"
   blank
 
   local redis_pw
+  if [[ "$redis_mode" == "external" ]]; then
+    echo -e "  ${DIM}Для внешнего Redis укажите его текущий пароль (пусто = без пароля).${RESET}"
+    blank
+  fi
   redis_pw=$(read_pass "Redis password" "$(env_get REDIS_PASSWORD)")
   if [[ -z "$redis_pw" ]]; then
     redis_pw=$(gen_pass 24)
@@ -289,8 +352,17 @@ run_wizard() {
   env_set MEDIASOUP_MIN_PORT      "$min_port"
   env_set MEDIASOUP_MAX_PORT      "$max_port"
   env_set MEDIASOUP_LOG_LEVEL     "warn"
-  env_set REDIS_HOST              "redis"
-  env_set REDIS_PORT              "6379"
+  env_set REDIS_MODE              "$redis_mode"
+  # Внешний Redis: контейнер обращается к хосту через host.docker.internal
+  if [[ "$redis_mode" == "external" ]]; then
+    local docker_redis_host="$redis_host"
+    [[ "$redis_host" == "127.0.0.1" || "$redis_host" == "localhost" ]] && \
+      docker_redis_host="host.docker.internal"
+    env_set REDIS_HOST            "$docker_redis_host"
+  else
+    env_set REDIS_HOST            "redis"
+  fi
+  env_set REDIS_PORT              "$redis_port"
   env_set REDIS_PASSWORD          "$redis_pw"
   env_set JWT_SECRET              "$jwt_secret"
   env_set JWT_EXPIRES_IN          "24h"

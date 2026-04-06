@@ -4,7 +4,10 @@
 
 services:
   # --- Redis: хранилище временных токенов и ключей ---
+  # Запускается только при REDIS_MODE=docker (профиль docker-redis).
+  # Если на VDS уже работает системный Redis — этот контейнер не нужен.
   redis:
+    profiles: ["docker-redis"]
     image: redis:7-alpine
     container_name: onionrp-redis
     restart: unless-stopped
@@ -37,9 +40,16 @@ services:
       - server-logs:/app/logs
     networks:
       - onionrp-net
+    # required: false — если redis-профиль не активен (внешний Redis),
+    # зависимость игнорируется и контейнер стартует без ожидания.
     depends_on:
       redis:
         condition: service_healthy
+        required: false
+    # host.docker.internal позволяет контейнеру обращаться к сервисам хоста
+    # (используется когда REDIS_HOST=host.docker.internal для внешнего Redis)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     cap_add:
       - SYS_NICE
     healthcheck:
