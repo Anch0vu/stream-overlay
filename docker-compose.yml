@@ -45,10 +45,6 @@ services:
       - server-logs:/app/logs
     networks:
       - onionrp-net
-    deploy:
-      resources:
-        limits:
-          memory: 1.5g
     logging:
       driver: "json-file"
       options:
