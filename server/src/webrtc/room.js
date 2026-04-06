@@ -93,8 +93,12 @@ class Room {
 
   /**
    * Получение возможностей роутера (RTP Capabilities)
+   * Бросает явную ошибку если роутер ещё не готов (пересоздание после краша воркера)
    */
   getRouterRtpCapabilities() {
+    if (!this.router || this.router.closed) {
+      throw new Error('Роутер mediasoup не готов — повторите попытку через несколько секунд');
+    }
     return this.router.rtpCapabilities;
   }
 
@@ -303,7 +307,9 @@ class Room {
   async setConsumerMaxBitrate(consumerId, bitrate) {
     const entry = this.consumers.get(consumerId);
     if (!entry) throw new Error('Консьюмер не найден');
-    await entry.consumer.setPreferredLayers({ spatialLayer: 0, temporalLayer: 0 });
+    // Используем setMaxBitrate — правильный API mediasoup для ограничения битрейта.
+    // setPreferredLayers управляет SVC-слоями, а не битрейтом.
+    await entry.consumer.setMaxBitrate(bitrate);
     logger.info('Битрейт консьюмера ограничен', { consumerId, bitrate });
   }
 

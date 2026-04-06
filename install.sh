@@ -402,10 +402,11 @@ gen_mod_key() {
 
   info "Авторизация как стример..."
   local token_resp token
+  # Правильный эндпоинт: POST /api/auth/streamer
   token_resp=$(curl -s --max-time 10 -X POST \
     -H "Content-Type: application/json" \
     -d "{\"password\":\"${streamer_pw}\"}" \
-    "http://${pub_ip}:${port}/api/auth/login" 2>/dev/null) || true
+    "http://${pub_ip}:${port}/api/auth/streamer" 2>/dev/null) || true
 
   token=$(printf '%s' "$token_resp" | grep -o '"token":"[^"]*"' | cut -d'"' -f4 2>/dev/null) || true
 
@@ -418,9 +419,10 @@ gen_mod_key() {
 
   info "Генерация ключа..."
   local key_resp key
+  # Правильный эндпоинт: POST /api/auth/keys/generate
   key_resp=$(curl -s --max-time 10 -X POST \
     -H "Authorization: Bearer ${token}" \
-    "http://${pub_ip}:${port}/api/auth/moderator-key" 2>/dev/null) || true
+    "http://${pub_ip}:${port}/api/auth/keys/generate" 2>/dev/null) || true
   key=$(printf '%s' "$key_resp" | grep -o '"key":"[^"]*"' | cut -d'"' -f4 2>/dev/null) || true
 
   if [[ -z "$key" ]]; then

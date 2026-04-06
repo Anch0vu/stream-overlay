@@ -149,14 +149,30 @@ export class WebRTCClient {
   }
 
   /**
-   * Запрос к серверу через сокет
+   * Запрос к серверу через сокет с таймаутом
    * @param {string} event — имя события
    * @param {object} data — данные запроса
+   * @param {number} timeoutMs — таймаут в мс (по умолчанию 15000)
    * @returns {Promise<object>} — ответ сервера
    */
-  _request(event, data = {}) {
+  _request(event, data = {}, timeoutMs = 15000) {
     return new Promise((resolve, reject) => {
+      let settled = false;
+
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(new Error(`WebRTC запрос '${event}' не получил ответа за ${timeoutMs}ms`));
+      }, timeoutMs);
+
       this.socket.emit(event, data, (response) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+
+        if (!response) {
+          return reject(new Error(`Нет ответа для события '${event}'`));
+        }
         if (response.success) {
           resolve(response);
         } else {
