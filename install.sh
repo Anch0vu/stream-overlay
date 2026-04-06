@@ -267,6 +267,9 @@ run_wizard() {
   # ─── TURN ───────────────────────────────────────────────
   echo -e "  ${BBLU}--  TURN / coturn  ------------------------------${RESET}"
   blank
+  echo -e "  ${DIM}TURN используется WebRTC для обхода NAT/firewall клиентов.${RESET}"
+  echo -e "  ${DIM}Username/realm — учётные данные встроенного coturn-сервера.${RESET}"
+  blank
 
   local _tu; _tu=$(env_get TURN_SERVER_USERNAME); _tu="${_tu:-onionrp}"
   local turn_user turn_realm
@@ -332,8 +335,13 @@ run_wizard() {
 build_and_start() {
   blank; hr
   info "Сборка контейнеров (BuildKit)..."
-  DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 \
-    compose build --progress=plain 2>&1 | tail -40
+  echo -e "  ${DIM}(первая сборка занимает 3–10 минут из-за компиляции нативных модулей)${RESET}"
+  blank
+  if ! DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 \
+       compose build --progress=plain 2>&1; then
+    err "Сборка завершилась с ошибкой. Проверьте вывод выше."
+    return 1
+  fi
   blank
   info "Запуск сервисов..."
   compose up -d
