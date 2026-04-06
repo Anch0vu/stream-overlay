@@ -32,6 +32,11 @@ services:
     container_name: onionrp-webrtc
     restart: unless-stopped
     env_file: .env
+    environment:
+      # 2 воркера mediasoup достаточно для overlay-стриминга.
+      # os.cpus().length на 16-ядерном VPS = 16 → 16 последовательных createWorker()
+      # → сервер не успевает пройти healthcheck, контейнер убивается.
+      MEDIASOUP_WORKERS: "2"
     ports:
       - "127.0.0.1:3001:3001"
       - "40000-49999:40000-49999/udp"

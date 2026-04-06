@@ -6,38 +6,50 @@
 
 FROM node:22-bullseye
 
-# Параллельная компиляция mediasoup C++ worker на всех ядрах процессора
+# ── Стратегия сборки mediasoup ─────────────────────────────────────────────
+# По умолчанию mediasoup пытается скачать prebuilt-бинарь с GitHub Releases
+# (~5-10 МБ, <10 секунд). Только если скачивание недоступно — компилирует из
+# исходников (5-10 минут). Оба пути обрабатываются одним npm ci.
+#
+# MEDIASOUP_SKIP_WORKER_PREBUILT_DOWNLOAD=false  → предпочесть скачивание (default)
+# MAKEFLAGS="-j$(nproc)"                         → параллельная компиляция, если всё же нужна
+# ──────────────────────────────────────────────────────────────────────────
+ENV MEDIASOUP_SKIP_WORKER_PREBUILT_DOWNLOAD=false
 ENV MAKEFLAGS="-j$(nproc)"
 
-# Build deps для mediasoup native addon
-# --mount=type=cache кэширует пакеты apt между пересборками (не скачивает повторно)
+# Build deps — нужны только если prebuilt не удалось скачать и идёт компиляция.
+# Кэшируются между пересборками через BuildKit cache mount.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && apt-get install -y \
+    apt-get update && apt-get install -y --no-install-recommends \
     python3 \
-    python3-pip \
     build-essential \
-    pkg-config
+    pkg-config \
+  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
+COPY package.json package-lock.json ./
 
-# --mount=type=cache кэширует npm registry между пересборками
-# Если package.json не менялся — этот слой берётся из Docker layer cache (0s)
+# npm ci запускает postinstall mediasoup:
+#   1. Пробует скачать prebuilt-бинарь → успех за ~10 сек
+#   2. Если недоступен — компилирует с MAKEFLAGS (параллельно)
+# Слой кэшируется в Docker: повторная сборка при неизменном package-lock = 0 сек
 RUN --mount=type=cache,target=/root/.npm \
     npm ci
 
 COPY . .
 
-# Удаляем devDeps после нативной сборки
+# Убираем devDependencies из финального образа
 RUN npm prune --omit=dev
 
 RUN mkdir -p /app/media/uploads /app/logs
 
 EXPOSE 3001
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+# start_period=45s: 2 воркера mediasoup стартуют за ~5-10s,
+# но Redis-соединение + инициализация router занимают время
+HEALTHCHECK --interval=20s --timeout=10s --start-period=45s --retries=3 \
   CMD wget -qO- http://localhost:3001/api/health || exit 1
 
 CMD ["node", "src/index.js"]

@@ -101,8 +101,8 @@ async function startServer() {
     });
   };
 
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
-  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => shutdown('SIGINT'));
 
   // Ловим необработанные ошибки
   process.on('uncaughtException', (err) => {

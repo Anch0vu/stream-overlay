@@ -192,13 +192,23 @@ export class WebRTCClient {
     for (const [, consumer] of this.consumers) {
       consumer.close();
     }
-    if (this.sendTransport) this.sendTransport.close();
-    if (this.recvTransport) this.recvTransport.close();
+
+    // Снимаем листенеры до close() — иначе объекты транспортов
+    // остаются в памяти через замыкания до GC.
+    if (this.sendTransport) {
+      this.sendTransport.removeAllListeners();
+      this.sendTransport.close();
+      this.sendTransport = null;
+    }
+    if (this.recvTransport) {
+      this.recvTransport.removeAllListeners();
+      this.recvTransport.close();
+      this.recvTransport = null;
+    }
 
     this.producers.clear();
     this.consumers.clear();
-    this.sendTransport = null;
-    this.recvTransport = null;
+    this.device = null;
 
     console.log('[WebRTC] Все соединения закрыты');
   }
