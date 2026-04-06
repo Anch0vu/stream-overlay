@@ -34,8 +34,14 @@ const config = {
 
   // --- mediasoup ---
   mediasoup: {
-    // Количество воркеров — по числу ядер процессора
-    numWorkers: require('os').cpus().length,
+    // Количество воркеров: берём из env или default 2.
+    // os.cpus().length на мощном VPS = 16+ → 16 последовательных await createWorker()
+    // → сервер не проходит healthcheck за start_period, контейнер убивается.
+    // 2 воркера достаточно для overlay-стриминга с запасом.
+    numWorkers: Math.min(
+      parseInt(process.env.MEDIASOUP_WORKERS, 10) || 2,
+      require('os').cpus().length
+    ),
     listenIp: process.env.MEDIASOUP_LISTEN_IP || '0.0.0.0',
     announcedIp: process.env.MEDIASOUP_ANNOUNCED_IP || null,
     minPort: parseInt(process.env.MEDIASOUP_MIN_PORT, 10) || 40000,

@@ -449,6 +449,7 @@ run_wizard() {
   env_set TURN_SERVER_USERNAME    "$turn_user"
   env_set TURN_SERVER_PASSWORD    "$turn_pw"
   env_set CORS_ORIGIN             "$cors_origin"
+  env_set MEDIASOUP_WORKERS       "2"
   env_set RATE_LIMIT_WINDOW_MS    "60000"
   env_set RATE_LIMIT_MAX_REQUESTS "100"
 
