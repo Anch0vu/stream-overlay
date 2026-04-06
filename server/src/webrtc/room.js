@@ -129,10 +129,11 @@ class Room {
       transportId: transport.id,
     });
 
-    // Слушаем закрытие транспорта
+    // Закрываем транспорт только при DTLS failure — не при 'closed',
+    // чтобы не вызвать двойной transport.close() когда removePeer() уже закрыл его.
     transport.on('dtlsstatechange', (dtlsState) => {
-      if (dtlsState === 'closed') {
-        logger.info('Транспорт закрыт (DTLS)', { transportId: transport.id });
+      if (dtlsState === 'failed') {
+        logger.warn('DTLS failed, закрываем транспорт', { transportId: transport.id });
         transport.close();
       }
     });
@@ -188,9 +189,10 @@ class Room {
       kind,
     });
 
+    // mediasoup уже закрывает producer внутри при transport.close() —
+    // вызывать producer.close() снова не нужно, только чистим карты.
     producer.on('transportclose', () => {
       logger.info('Продюсер закрыт (транспорт)', { producerId: producer.id });
-      producer.close();
       peer.producers.delete(producer.id);
       this.producers.delete(producer.id);
     });
@@ -233,16 +235,16 @@ class Room {
       producerId,
     });
 
+    // mediasoup уже закрывает consumer внутри при transport/producer close —
+    // вызывать consumer.close() снова не нужно, только чистим карты.
     consumer.on('transportclose', () => {
       logger.info('Консьюмер закрыт (транспорт)', { consumerId: consumer.id });
-      consumer.close();
       peer.consumers.delete(consumer.id);
       this.consumers.delete(consumer.id);
     });
 
     consumer.on('producerclose', () => {
       logger.info('Консьюмер закрыт (продюсер)', { consumerId: consumer.id });
-      consumer.close();
       peer.consumers.delete(consumer.id);
       this.consumers.delete(consumer.id);
     });
@@ -355,14 +357,18 @@ class Room {
     }
 
     // Закрываем роутер
-    if (this.router) {
+    if (this.router && !this.router.closed) {
       this.router.close();
     }
+    this.router = null;
 
-    // Закрываем воркеров
+    // Снимаем 'died'-листенеры до close() — иначе _replaceWorker()
+    // попытается поднять нового воркера во время штатного завершения.
     for (const worker of this.workers) {
+      worker.removeAllListeners('died');
       worker.close();
     }
+    this.workers = [];
 
     logger.info('Комната закрыта');
   }

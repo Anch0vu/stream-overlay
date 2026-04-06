@@ -113,6 +113,8 @@ export function useWebRTC(socket, connected) {
   useEffect(() => {
     if (!initialized) return;
 
+    // Флаг для защиты от вызова setStats после размонтирования
+    let active = true;
     // Сохраняем предыдущие байты для расчёта битрейта
     let prevBytes = 0;
     let prevTs = performance.now();
@@ -167,6 +169,7 @@ export function useWebRTC(socket, connected) {
         ? Math.round((packetsLost / packetsTotal) * 1000) / 10
         : 0;
 
+      if (!active) return;
       setStats({
         fps,
         bitrate: Math.max(0, bitrateBps),
@@ -178,7 +181,10 @@ export function useWebRTC(socket, connected) {
     // Первый сбор сразу, потом каждые 2с
     collectStats();
     const interval = setInterval(collectStats, 2000);
-    return () => clearInterval(interval);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
   }, [initialized]);
 
   return {

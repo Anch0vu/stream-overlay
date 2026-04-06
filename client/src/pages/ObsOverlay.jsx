@@ -33,6 +33,7 @@ export default function ObsOverlay() {
   const [visible, setVisible] = useState(false);
   const audioRef = useRef(null);
   const socketRef = useRef(null);
+  const overlayTimerRef = useRef(null);
 
   // Подключение к /overlay namespace (без JWT)
   useEffect(() => {
@@ -55,7 +56,8 @@ export default function ObsOverlay() {
     socket.on('overlayChanged', ({ type, url, options = {} }) => {
       // Fade out → swap content → fade in
       setVisible(false);
-      setTimeout(() => {
+      clearTimeout(overlayTimerRef.current);
+      overlayTimerRef.current = setTimeout(() => {
         setOverlay({ type, url, options });
         setVisible(true);
       }, 200);
@@ -63,7 +65,8 @@ export default function ObsOverlay() {
 
     socket.on('overlayRemoved', () => {
       setVisible(false);
-      setTimeout(() => setOverlay(null), 300);
+      clearTimeout(overlayTimerRef.current);
+      overlayTimerRef.current = setTimeout(() => setOverlay(null), 300);
     });
 
     socket.on('volumeChanged', ({ volume }) => {
@@ -73,7 +76,10 @@ export default function ObsOverlay() {
     });
 
     socketRef.current = socket;
-    return () => socket.disconnect();
+    return () => {
+      clearTimeout(overlayTimerRef.current);
+      socket.disconnect();
+    };
   }, []);
 
   // Когда overlay появляется — запускаем аудио если нужно
