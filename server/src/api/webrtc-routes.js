@@ -8,6 +8,7 @@
  */
 
 const express = require('express');
+const { monitorEventLoopDelay } = require('perf_hooks');
 const config = require('../config');
 const { authMiddleware, moderatorOrStreamer } = require('../auth/middleware');
 const { getRedis } = require('../utils/redis');
@@ -15,6 +16,10 @@ const logger = require('../utils/logger');
 
 // Memory baseline captured at module load — used to track growth over time
 const _memBaseline = process.memoryUsage();
+
+// Event loop lag histogram — samples every 20 ms, exposes .mean in nanoseconds
+const _elMonitor = monitorEventLoopDelay({ resolution: 20 });
+_elMonitor.enable();
 
 /**
  * Создание роутера WebRTC маршрутов
@@ -98,33 +103,76 @@ function createWebRTCRoutes(room) {
       redisOk = false;
     }
 
-    const roomMetrics = room.getMetrics();
+    const rm = room.getMetrics();
+    const rangeSize = config.mediasoup.maxPort - config.mediasoup.minPort + 1;
+
+    // ── Invariant checks ──────────────────────────────────────────────────
+    // Any entry here means the service is in an unexpected state.
+    const violations = [];
+
+    if (rm.workers.length !== config.mediasoup.numWorkers) {
+      violations.push(`worker_count: expected ${config.mediasoup.numWorkers}, got ${rm.workers.length}`);
+    }
+    rm.workers.forEach((w) => {
+      if (w.closed) violations.push(`worker_closed: index=${w.index} pid=${w.pid}`);
+    });
+    if (rm.transports < rm.producers) {
+      violations.push(`transports_lt_producers: transports=${rm.transports} producers=${rm.producers}`);
+    }
+    const minExpectedConsumers = Math.max(0, rm.peers - 1);
+    if (rm.peers > 1 && rm.consumers < minExpectedConsumers) {
+      violations.push(`consumers_lt_peers_minus1: consumers=${rm.consumers} peers=${rm.peers}`);
+    }
+    if (!redisOk) {
+      violations.push('redis_unreachable');
+    }
+    // Orphan transport check: active must equal opened - closed.
+    // Also catches the worker-crash window before onPeerEviction fires.
+    const { transportLifetime: tl } = rm;
+    if (tl.active !== tl.opened - tl.closed) {
+      violations.push(`orphan_transports: active=${tl.active} opened=${tl.opened} closed=${tl.closed}`);
+    }
+    // Explicit: no transports must remain when there are no peers
+    if (rm.peers === 0 && rm.transports > 0) {
+      violations.push(`transports_without_peers: transports=${rm.transports}`);
+    }
+    // Port range constraint: 50–200
+    if (rangeSize < 50) {
+      violations.push(`port_range_too_small: ${rangeSize} (min 50)`);
+    } else if (rangeSize > 200) {
+      violations.push(`port_range_oversized: ${rangeSize} (max 200)`);
+    }
+    // ─────────────────────────────────────────────────────────────────────
 
     res.json({
       timestamp: new Date().toISOString(),
-      uptime: Math.round(process.uptime()),
+      uptime_sec: Math.round(process.uptime()),
+      event_loop: {
+        lag_ms: Math.round(_elMonitor.mean / 1e6),
+      },
       memory: {
-        rss:       mem.rss,
-        heapUsed:  mem.heapUsed,
-        heapTotal: mem.heapTotal,
-        // Delta vs baseline at startup — positive growth is expected initially,
-        // sustained linear growth over 30 min indicates a leak.
-        rssDelta:      mem.rss      - _memBaseline.rss,
-        heapUsedDelta: mem.heapUsed - _memBaseline.heapUsed,
+        rss_bytes:             mem.rss,
+        heap_used_bytes:       mem.heapUsed,
+        heap_total_bytes:      mem.heapTotal,
+        rss_delta_bytes:       mem.rss      - _memBaseline.rss,
+        heap_used_delta_bytes: mem.heapUsed - _memBaseline.heapUsed,
       },
       mediasoup: {
         configuredWorkers: config.mediasoup.numWorkers,
-        workers:    roomMetrics.workers,      // [{index, pid, closed}]
-        peers:      roomMetrics.peers,
-        transports: roomMetrics.transports,   // orphan check: should drop to 0 after all peers disconnect
-        producers:  roomMetrics.producers,
-        consumers:  roomMetrics.consumers,
+        workers:    rm.workers,
+        peers:      rm.peers,
+        transports: rm.transports,
+        producers:  rm.producers,
+        consumers:  rm.consumers,
+        transportLifetime: tl,
         ports: {
-          min: config.mediasoup.minPort,
-          max: config.mediasoup.maxPort,
+          min:       config.mediasoup.minPort,
+          max:       config.mediasoup.maxPort,
+          rangeSize,
         },
       },
       redis: { ok: redisOk },
+      violations,
     });
   });
 

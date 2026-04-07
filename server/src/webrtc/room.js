@@ -25,6 +25,13 @@ class Room {
     this.producers = new Map();
     // Консьюмеры (модераторы/зрители)
     this.consumers = new Map();
+    // Счётчики жизненного цикла транспортов — для проверки orphan-транспортов:
+    // active должен всегда равняться opened - closed.
+    this._transportOpenCount  = 0;
+    this._transportCloseCount = 0;
+    // Callback set by socket.js: called when worker[0] crashes and all peers
+    // are evicted so the WebSocket layer can emit 'peerRestarted' to clients.
+    this.onPeerEviction = null;
   }
 
   /**
@@ -81,6 +88,18 @@ class Room {
 
       // Если упавший воркер был тем, на котором работает роутер — пересоздаём роутер
       if (index === 0 && (!this.router || this.router.closed)) {
+        // Все транспорты умерли вместе с воркером. Выселяем пиров до пересоздания
+        // роутера: removePeer() корректно инкрементирует _transportCloseCount и
+        // очищает карты, чтобы orphan-проверка в /metrics не выдавала ложный сигнал.
+        const evicted = Array.from(this.peers.keys());
+        for (const socketId of evicted) {
+          this.removePeer(socketId);
+        }
+        if (evicted.length > 0) {
+          logger.warn(`Воркер #0 упал: выселено ${evicted.length} пиров`, { socketIds: evicted });
+          if (this.onPeerEviction) this.onPeerEviction(evicted);
+        }
+
         this.router = await worker.createRouter({ mediaCodecs: routerMediaCodecs });
         logger.info('Роутер mediasoup пересоздан на новом воркере #0');
       }
@@ -122,6 +141,7 @@ class Room {
 
     const peer = this.peers.get(socketId);
     peer.transports.set(transport.id, transport);
+    this._transportOpenCount++;
 
     logger.info('Транспорт создан', {
       socketId,
@@ -135,6 +155,7 @@ class Room {
       if (dtlsState === 'failed') {
         logger.warn('DTLS failed, закрываем транспорт', { transportId: transport.id });
         peer.transports.delete(transport.id);
+        this._transportCloseCount++;
         transport.close();
       }
     });
@@ -326,6 +347,7 @@ class Room {
 
     // Закрываем все транспорты пира (автоматически закроет продюсеров и консьюмеров)
     for (const [, transport] of peer.transports) {
+      this._transportCloseCount++;
       transport.close();
     }
 
@@ -367,6 +389,14 @@ class Room {
       transports: transportCount,
       producers: this.producers.size,
       consumers: this.consumers.size,
+      // Lifetime counters — invariant: active == opened - closed.
+      // Any divergence means a transport was closed without going through
+      // removePeer() (orphan leak).
+      transportLifetime: {
+        opened: this._transportOpenCount,
+        closed: this._transportCloseCount,
+        active: transportCount,
+      },
     };
   }
 
