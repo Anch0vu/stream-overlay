@@ -134,6 +134,7 @@ class Room {
     transport.on('dtlsstatechange', (dtlsState) => {
       if (dtlsState === 'failed') {
         logger.warn('DTLS failed, закрываем транспорт', { transportId: transport.id });
+        peer.transports.delete(transport.id);
         transport.close();
       }
     });

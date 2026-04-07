@@ -37,6 +37,10 @@ export function useWebRTC(socket, connected) {
       client.close();
       setInitialized(false);
       setPublishing(false);
+      setRemoteStreams((prev) => {
+        prev.forEach((s) => s.getTracks().forEach((t) => t.stop()));
+        return [];
+      });
     };
   }, [socket, connected]);
 

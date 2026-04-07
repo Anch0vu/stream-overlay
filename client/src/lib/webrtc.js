@@ -118,6 +118,9 @@ export class WebRTCClient {
     for (const track of stream.getTracks()) {
       const producer = await this.sendTransport.produce({ track });
       this.producers.set(producer.id, producer);
+      producer.on('transportclose', () => {
+        this.producers.delete(producer.id);
+      });
       console.log(`[WebRTC] Продюсер создан: ${track.kind}`, producer.id);
     }
   }
@@ -140,6 +143,12 @@ export class WebRTCClient {
 
     const consumer = await this.recvTransport.consume(consumerData);
     this.consumers.set(consumer.id, consumer);
+    consumer.on('transportclose', () => {
+      this.consumers.delete(consumer.id);
+    });
+    consumer.on('producerclose', () => {
+      this.consumers.delete(consumer.id);
+    });
 
     // Возобновляем консьюмера
     await this._request('resumeConsumer', { consumerId: consumer.id });
