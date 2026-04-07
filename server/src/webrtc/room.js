@@ -349,6 +349,28 @@ class Room {
   }
 
   /**
+   * Метрики комнаты для мониторинга runtime-стабильности
+   * @returns {object}
+   */
+  getMetrics() {
+    let transportCount = 0;
+    for (const [, peer] of this.peers) {
+      transportCount += peer.transports.size;
+    }
+    return {
+      workers: this.workers.map((w, i) => ({
+        index: i,
+        pid: w.pid,
+        closed: w.closed,
+      })),
+      peers: this.peers.size,
+      transports: transportCount,
+      producers: this.producers.size,
+      consumers: this.consumers.size,
+    };
+  }
+
+  /**
    * Закрытие комнаты и освобождение всех ресурсов
    */
   async close() {

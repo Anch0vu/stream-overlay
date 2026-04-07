@@ -10,7 +10,11 @@
 const express = require('express');
 const config = require('../config');
 const { authMiddleware, moderatorOrStreamer } = require('../auth/middleware');
+const { getRedis } = require('../utils/redis');
 const logger = require('../utils/logger');
+
+// Memory baseline captured at module load — used to track growth over time
+const _memBaseline = process.memoryUsage();
 
 /**
  * Создание роутера WebRTC маршрутов
@@ -68,6 +72,60 @@ function createWebRTCRoutes(room) {
       logger.error('Ошибка получения статистики комнаты', { error: err.message });
       res.status(500).json({ error: 'Ошибка получения статистики' });
     }
+  });
+
+  /**
+   * GET /api/webrtc/metrics
+   * Runtime-метрики для проверки стабильности:
+   *   - рост памяти (rss/heapUsed vs baseline при старте)
+   *   - количество воркеров и их состояние
+   *   - активные транспорты / продюсеры / консьюмеры
+   *   - доступность Redis
+   *   - диапазон UDP-портов из конфига
+   *
+   * Используется для: мониторинга утечек, проверки orphan-транспортов,
+   * сверки worker-count с MEDIASOUP_WORKERS.
+   */
+  router.get('/metrics', authMiddleware, moderatorOrStreamer, async (req, res) => {
+    const mem = process.memoryUsage();
+
+    // Redis ping — проверяем доступность pubsub/session-store
+    let redisOk = false;
+    try {
+      await getRedis().ping();
+      redisOk = true;
+    } catch {
+      redisOk = false;
+    }
+
+    const roomMetrics = room.getMetrics();
+
+    res.json({
+      timestamp: new Date().toISOString(),
+      uptime: Math.round(process.uptime()),
+      memory: {
+        rss:       mem.rss,
+        heapUsed:  mem.heapUsed,
+        heapTotal: mem.heapTotal,
+        // Delta vs baseline at startup — positive growth is expected initially,
+        // sustained linear growth over 30 min indicates a leak.
+        rssDelta:      mem.rss      - _memBaseline.rss,
+        heapUsedDelta: mem.heapUsed - _memBaseline.heapUsed,
+      },
+      mediasoup: {
+        configuredWorkers: config.mediasoup.numWorkers,
+        workers:    roomMetrics.workers,      // [{index, pid, closed}]
+        peers:      roomMetrics.peers,
+        transports: roomMetrics.transports,   // orphan check: should drop to 0 after all peers disconnect
+        producers:  roomMetrics.producers,
+        consumers:  roomMetrics.consumers,
+        ports: {
+          min: config.mediasoup.minPort,
+          max: config.mediasoup.maxPort,
+        },
+      },
+      redis: { ok: redisOk },
+    });
   });
 
   return router;
