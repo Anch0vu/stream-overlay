@@ -126,10 +126,15 @@ function createWebRTCRoutes(room) {
     if (!redisOk) {
       violations.push('redis_unreachable');
     }
-    // Orphan transport check: active must equal opened - closed
+    // Orphan transport check: active must equal opened - closed.
+    // Also catches the worker-crash window before onPeerEviction fires.
     const { transportLifetime: tl } = rm;
     if (tl.active !== tl.opened - tl.closed) {
       violations.push(`orphan_transports: active=${tl.active} opened=${tl.opened} closed=${tl.closed}`);
+    }
+    // Explicit: no transports must remain when there are no peers
+    if (rm.peers === 0 && rm.transports > 0) {
+      violations.push(`transports_without_peers: transports=${rm.transports}`);
     }
     // Port range constraint: 50–200
     if (rangeSize < 50) {
@@ -141,15 +146,16 @@ function createWebRTCRoutes(room) {
 
     res.json({
       timestamp: new Date().toISOString(),
-      uptime: Math.round(process.uptime()),
-      // Event loop lag — p99 > 100 ms indicates blocking work on the main thread
-      eventLoopLagMs: Math.round(_elMonitor.mean / 1e6),
+      uptime_sec: Math.round(process.uptime()),
+      event_loop: {
+        lag_ms: Math.round(_elMonitor.mean / 1e6),
+      },
       memory: {
-        rss:           mem.rss,
-        heapUsed:      mem.heapUsed,
-        heapTotal:     mem.heapTotal,
-        rssDelta:      mem.rss      - _memBaseline.rss,
-        heapUsedDelta: mem.heapUsed - _memBaseline.heapUsed,
+        rss_bytes:             mem.rss,
+        heap_used_bytes:       mem.heapUsed,
+        heap_total_bytes:      mem.heapTotal,
+        rss_delta_bytes:       mem.rss      - _memBaseline.rss,
+        heap_used_delta_bytes: mem.heapUsed - _memBaseline.heapUsed,
       },
       mediasoup: {
         configuredWorkers: config.mediasoup.numWorkers,
@@ -166,7 +172,6 @@ function createWebRTCRoutes(room) {
         },
       },
       redis: { ok: redisOk },
-      // Empty array = healthy. Non-empty = something needs attention.
       violations,
     });
   });

@@ -70,6 +70,14 @@ function initSocketServer(httpServer, room) {
     }
   });
 
+  // Notify evicted peers when worker[0] crashes and sessions must be re-established
+  room.onPeerEviction = (socketIds) => {
+    for (const socketId of socketIds) {
+      const s = io.sockets.sockets.get(socketId);
+      if (s) s.emit('peerRestarted');
+    }
+  };
+
   // Объявляем overlayNsp до io.on('connection') чтобы он был доступен внутри обработчиков
   const overlayNsp = io.of('/overlay');
 

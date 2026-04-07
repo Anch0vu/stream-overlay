@@ -29,6 +29,9 @@ class Room {
     // active должен всегда равняться opened - closed.
     this._transportOpenCount  = 0;
     this._transportCloseCount = 0;
+    // Callback set by socket.js: called when worker[0] crashes and all peers
+    // are evicted so the WebSocket layer can emit 'peerRestarted' to clients.
+    this.onPeerEviction = null;
   }
 
   /**
@@ -85,6 +88,18 @@ class Room {
 
       // Если упавший воркер был тем, на котором работает роутер — пересоздаём роутер
       if (index === 0 && (!this.router || this.router.closed)) {
+        // Все транспорты умерли вместе с воркером. Выселяем пиров до пересоздания
+        // роутера: removePeer() корректно инкрементирует _transportCloseCount и
+        // очищает карты, чтобы orphan-проверка в /metrics не выдавала ложный сигнал.
+        const evicted = Array.from(this.peers.keys());
+        for (const socketId of evicted) {
+          this.removePeer(socketId);
+        }
+        if (evicted.length > 0) {
+          logger.warn(`Воркер #0 упал: выселено ${evicted.length} пиров`, { socketIds: evicted });
+          if (this.onPeerEviction) this.onPeerEviction(evicted);
+        }
+
         this.router = await worker.createRouter({ mediaCodecs: routerMediaCodecs });
         logger.info('Роутер mediasoup пересоздан на новом воркере #0');
       }
