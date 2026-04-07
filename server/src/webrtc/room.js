@@ -25,6 +25,10 @@ class Room {
     this.producers = new Map();
     // Консьюмеры (модераторы/зрители)
     this.consumers = new Map();
+    // Счётчики жизненного цикла транспортов — для проверки orphan-транспортов:
+    // active должен всегда равняться opened - closed.
+    this._transportOpenCount  = 0;
+    this._transportCloseCount = 0;
   }
 
   /**
@@ -122,6 +126,7 @@ class Room {
 
     const peer = this.peers.get(socketId);
     peer.transports.set(transport.id, transport);
+    this._transportOpenCount++;
 
     logger.info('Транспорт создан', {
       socketId,
@@ -135,6 +140,7 @@ class Room {
       if (dtlsState === 'failed') {
         logger.warn('DTLS failed, закрываем транспорт', { transportId: transport.id });
         peer.transports.delete(transport.id);
+        this._transportCloseCount++;
         transport.close();
       }
     });
@@ -326,6 +332,7 @@ class Room {
 
     // Закрываем все транспорты пира (автоматически закроет продюсеров и консьюмеров)
     for (const [, transport] of peer.transports) {
+      this._transportCloseCount++;
       transport.close();
     }
 
@@ -367,6 +374,14 @@ class Room {
       transports: transportCount,
       producers: this.producers.size,
       consumers: this.consumers.size,
+      // Lifetime counters — invariant: active == opened - closed.
+      // Any divergence means a transport was closed without going through
+      // removePeer() (orphan leak).
+      transportLifetime: {
+        opened: this._transportOpenCount,
+        closed: this._transportCloseCount,
+        active: transportCount,
+      },
     };
   }
 
