@@ -237,7 +237,7 @@ wait_healthy() {
 check_firewall() {
   local min_port max_port
   min_port=$(env_get MEDIASOUP_MIN_PORT); min_port="${min_port:-40000}"
-  max_port=$(env_get MEDIASOUP_MAX_PORT); max_port="${max_port:-49999}"
+  max_port=$(env_get MEDIASOUP_MAX_PORT); max_port="${max_port:-40099}"
 
   # ufw
   if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "^Status: active"; then
@@ -398,7 +398,7 @@ run_wizard() {
   blank
 
   local _mn; _mn=$(env_get MEDIASOUP_MIN_PORT); _mn="${_mn:-40000}"
-  local _mx; _mx=$(env_get MEDIASOUP_MAX_PORT); _mx="${_mx:-49999}"
+  local _mx; _mx=$(env_get MEDIASOUP_MAX_PORT); _mx="${_mx:-40099}"
   local min_port max_port
   min_port=$(read_val "UDP мин. порт" "$_mn")
   max_port=$(read_val "UDP макс. порт" "$_mx")

@@ -11,18 +11,20 @@ FROM node:22-bullseye
 # (~5-10 МБ, <10 секунд). Только если скачивание недоступно — компилирует из
 # исходников (5-10 минут). Оба пути обрабатываются одним npm ci.
 #
-# MEDIASOUP_SKIP_WORKER_PREBUILT_DOWNLOAD=false  → предпочесть скачивание (default)
-# MAKEFLAGS="-j$(nproc)"                         → параллельная компиляция, если всё же нужна
+# ВАЖНО: не устанавливать MEDIASOUP_SKIP_WORKER_PREBUILT_DOWNLOAD в "false" —
+# любая непустая строка воспринимается как truthy в JS и отключает скачивание.
+# MAKEFLAGS="-j$(nproc)"  → параллельная компиляция, если скачивание недоступно
 # ──────────────────────────────────────────────────────────────────────────
-ENV MEDIASOUP_SKIP_WORKER_PREBUILT_DOWNLOAD=false
 ENV MAKEFLAGS="-j$(nproc)"
 
 # Build deps — нужны только если prebuilt не удалось скачать и идёт компиляция.
+# python3-pip нужен mediasoup для установки invoke (сборочный инструмент).
 # Кэшируются между пересборками через BuildKit cache mount.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
     python3 \
+    python3-pip \
     build-essential \
     pkg-config \
   && rm -rf /var/lib/apt/lists/*
