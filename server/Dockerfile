@@ -4,7 +4,12 @@
 # Node.js + mediasoup SFU
 # ===================================
 
-FROM node:22-bullseye
+# Debian 12 (bookworm) — glibc 2.36. ВАЖНО: mediasoup prebuilt-воркер
+# (linux-x64-kernel6) требует glibc >= 2.32 и GLIBCXX_3.4.29. На bullseye
+# (glibc 2.31) prebuilt НЕ запускается, и сборка каждый раз молча уходит в
+# компиляцию из исходников (нужны pip/pypi + build-essential, 5-10 мин).
+# На bookworm prebuilt валиден → npm ci ~4 c без компиляции.
+FROM node:22-bookworm
 
 # ── Стратегия сборки mediasoup ─────────────────────────────────────────────
 # По умолчанию mediasoup пытается скачать prebuilt-бинарь с GitHub Releases

@@ -96,7 +96,7 @@ bash install.sh uninstall   # удалить контейнеры и volumes
                       └─────────────┘
                              │
               mediasoup SFU workers
-              UDP 40000-49999
+              UDP 40000-40099
 ```
 
 ### Сервисы Docker
@@ -108,7 +108,7 @@ bash install.sh uninstall   # удалить контейнеры и volumes
 | `web` | React SPA | 80 | — (через nginx) |
 | `redis` | Ключи, токены | 6379 | 6379 (localhost) |
 | `coturn` | NAT traversal TURN | 3478 | 3478 UDP+TCP |
-| mediasoup RTC | UDP relay | — | 40000–49999 UDP |
+| mediasoup RTC | UDP relay | — | 40000–40099 UDP |
 
 > **Redis** запускается в Docker только при выборе `REDIS_MODE=docker` (профиль `docker-redis`).  
 > При `REDIS_MODE=external` используется системный Redis через `host.docker.internal`.
@@ -137,7 +137,7 @@ bash install.sh uninstall   # удалить контейнеры и volumes
 | `SERVER_PORT` | `3001` | Порт сигнального сервера |
 | `WEB_PORT` | `13777` | Внешний порт веб-панели |
 | `MEDIASOUP_MIN_PORT` | `40000` | UDP диапазон (нижний) |
-| `MEDIASOUP_MAX_PORT` | `49999` | UDP диапазон (верхний) |
+| `MEDIASOUP_MAX_PORT` | `40099` | UDP диапазон (верхний) |
 | `MEDIASOUP_LOG_LEVEL` | `warn` | Уровень логов mediasoup |
 
 ### Redis
@@ -179,14 +179,14 @@ bash install.sh uninstall   # удалить контейнеры и volumes
 ufw allow 13777/tcp        # Веб-панель
 ufw allow 3478/tcp
 ufw allow 3478/udp         # TURN
-ufw allow 40000:49999/udp  # mediasoup WebRTC
+ufw allow 40000:40099/udp  # mediasoup WebRTC
 ```
 
 | Порт | Протокол | Назначение |
 |------|----------|-----------|
 | 13777 | TCP | Веб-панель + API |
 | 3478 | TCP+UDP | TURN (coturn) |
-| 40000–49999 | UDP | mediasoup WebRTC |
+| 40000–40099 | UDP | mediasoup WebRTC |
 
 > `install.sh` проверяет открытые порты сразу после деплоя и предупреждает, если WebRTC-диапазон заблокирован.
 
@@ -206,7 +206,7 @@ bash install.sh
 # → При вопросе про Redis: 1 если порт 6379 занят, 1 если свободен
 
 # 3. Открыть порты (если ufw активен)
-ufw allow 13777/tcp && ufw allow 3478 && ufw allow 40000:49999/udp
+ufw allow 13777/tcp && ufw allow 3478 && ufw allow 40000:40099/udp
 
 # 4. Убедиться в работе
 curl http://YOUR_IP:13777/api/health
@@ -385,4 +385,4 @@ stream-overlay/
 | Docker Compose | v2+ | v2.20+ |
 | Node.js | 22 (в контейнере) | — |
 
-Открытые порты: `13777/tcp`, `3478/tcp+udp`, `40000–49999/udp`
+Открытые порты: `13777/tcp`, `3478/tcp+udp`, `40000–40099/udp`

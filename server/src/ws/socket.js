@@ -171,8 +171,9 @@ function initSocketServer(httpServer, room) {
 
     socket.on('setVolume', ({ producerId, volume }) => {
       if (role !== 'moderator' && role !== 'streamer') return;
-      // Клamp volume в диапазон [0, 1] — защита от невалидных значений (NaN, Infinity, -99)
-      const safeVolume = Math.max(0, Math.min(1, parseFloat(volume) || 0));
+      // Кламп volume в диапазон [0, 100] — единая процентная шкала панели и оверлея:
+      // VolumeControl шлёт 0–100, ObsOverlay делит на 100. Защита от NaN/Infinity/-99.
+      const safeVolume = Math.max(0, Math.min(100, parseFloat(volume) || 0));
       io.emit('volumeChanged', { producerId, volume: safeVolume });
       // Relay to OBS overlay namespace as well
       overlayNsp.emit('volumeChanged', { producerId, volume: safeVolume });

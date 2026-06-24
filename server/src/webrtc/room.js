@@ -249,7 +249,9 @@ class Room {
     });
 
     peer.consumers.set(consumer.id, consumer);
-    this.consumers.set(consumer.id, { consumer, socketId });
+    // Храним ссылку на транспорт: ограничение битрейта консьюмера выполняется
+    // через transport.setMaxOutgoingBitrate (у Consumer такого метода нет).
+    this.consumers.set(consumer.id, { consumer, socketId, transport });
 
     logger.info('Консьюмер создан', {
       socketId,
@@ -331,9 +333,9 @@ class Room {
   async setConsumerMaxBitrate(consumerId, bitrate) {
     const entry = this.consumers.get(consumerId);
     if (!entry) throw new Error('Консьюмер не найден');
-    // Используем setMaxBitrate — правильный API mediasoup для ограничения битрейта.
-    // setPreferredLayers управляет SVC-слоями, а не битрейтом.
-    await entry.consumer.setMaxBitrate(bitrate);
+    // У mediasoup Consumer НЕТ метода setMaxBitrate. Исходящий к клиенту битрейт
+    // ограничивается на его recv-транспорте через setMaxOutgoingBitrate.
+    await entry.transport.setMaxOutgoingBitrate(bitrate);
     logger.info('Битрейт консьюмера ограничен', { consumerId, bitrate });
   }
 
