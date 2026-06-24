@@ -46,7 +46,10 @@ async function generateKey(streamerId) {
  */
 async function validateKey(key) {
   const redis = getRedis();
-  const data = await redis.get(`${KEY_PREFIX}${key}`);
+  // GETDEL атомарно читает и удаляет ключ за одну операцию — исключает гонку
+  // (TOCTOU), при которой два одновременных запроса успели бы использовать один
+  // одноразовый ключ до его удаления. Требует Redis >= 6.2 (в проекте 7.x).
+  const data = await redis.getdel(`${KEY_PREFIX}${key}`);
 
   if (!data) {
     logger.warn('Попытка использования невалидного ключа', { key: key.substring(0, 8) + '...' });
@@ -54,15 +57,6 @@ async function validateKey(key) {
   }
 
   const keyData = JSON.parse(data);
-
-  // Проверяем, не использован ли ключ ранее
-  if (keyData.used) {
-    logger.warn('Попытка повторного использования ключа', { key: key.substring(0, 8) + '...' });
-    return null;
-  }
-
-  // Помечаем ключ как использованный и удаляем
-  await redis.del(`${KEY_PREFIX}${key}`);
 
   logger.info('Ключ модератора использован', { streamerId: keyData.streamerId });
 
